@@ -4,37 +4,37 @@ import { useEffect, useRef, useCallback } from "react"
 import { supabase } from "@/lib/supabase"
 import { updateTrip, updateBusStatus, updateBusLocation, deleteBusLocation } from "@/lib/database"
 import { realtimeStore } from "@/lib/realtime"
-import type { Trip, Bus } from "@/types"
+import type { Trip } from "@/types"
 import { useToast } from "@/hooks/use-toast"
 
 // Global tracking intervals
 const trackingIntervals = new Map<string, NodeJS.Timeout>()
 const tripStartTimes = new Map<string, number>()
 
-// Perhitungan kecepatan realistis berdasarkan jenis rute
+// Realistic speed calculation based on route type and conditions
 const getRealisticSpeed = (distance: number): number => {
   let baseSpeed
   
-  // Tentukan kecepatan berdasarkan jarak (jenis rute)
+  // Determine speed based on distance (route type)
   if (distance < 50) {
-    // Rute kota: 25-40 km/jam (macet, lampu merah)
+    // City routes: 25-40 km/h (traffic, stops)
     baseSpeed = Math.floor(Math.random() * (40 - 25 + 1)) + 25
   } else if (distance < 150) {
-    // Rute antar kota: 45-65 km/jam (jalan campuran)
+    // Inter-city routes: 45-65 km/h (mixed roads)
     baseSpeed = Math.floor(Math.random() * (65 - 45 + 1)) + 45
   } else {
-    // Rute jarak jauh: 60-80 km/jam (tol dengan berhenti)
+    // Long distance routes: 60-80 km/h (highways with stops)
     baseSpeed = Math.floor(Math.random() * (80 - 60 + 1)) + 60
   }
   
-  // Tambah variasi acak untuk kondisi lalu lintas (-10 sampai +5 km/jam)
+  // Add random variation for traffic conditions (-10 to +5 km/h)
   const variation = Math.floor(Math.random() * 16) - 10
-  return Math.max(20, Math.min(85, baseSpeed + variation)) // Tetap dalam batas wajar
+  return Math.max(20, Math.min(85, baseSpeed + variation)) // Keep within reasonable bounds
 }
 
-// Hitung jarak antara dua koordinat
+// Calculate distance between two coordinates
 const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
-  const R = 6371 // Radius bumi dalam kilometer
+  const R = 6371 // Earth's radius in kilometers
   const dLat = toRadians(lat2 - lat1)
   const dLng = toRadians(lng2 - lng1)
 
@@ -52,25 +52,25 @@ export function GlobalTracker() {
   const { toast } = useToast()
   const isInitialized = useRef(false)
 
-  // Mulai tracking untuk trip tertentu dengan timing realistis
+  // Start tracking for a specific trip with realistic timing
   const startTracking = useCallback(
     (trip: Trip) => {
       const buses = realtimeStore.getBuses()
       const bus = buses.find((b) => b.id === trip.bus_id)
       const tripName = bus?.nickname || trip.id.slice(0, 8)
-      console.log("🚀 Memulai GLOBAL tracking untuk:", tripName)
+      console.log("🚀 Starting GLOBAL tracking for:", tripName)
 
-      // Hentikan interval yang ada
+      // Clear existing interval
       const existingInterval = trackingIntervals.get(trip.id)
       if (existingInterval) {
         clearInterval(existingInterval)
       }
 
-      // Simpan waktu mulai trip yang sebenarnya untuk perhitungan elapsed time yang akurat
+      // Store actual trip start time for accurate elapsed time calculation
       const actualStartTime = trip.start_time ? new Date(trip.start_time).getTime() : Date.now()
       tripStartTimes.set(trip.id, actualStartTime)
 
-      // Hitung jarak total untuk kecepatan realistis
+      // Calculate total distance for realistic speed
       let totalDistance = 0
       if (trip.route && trip.route.length > 1) {
         for (let i = 0; i < trip.route.length - 1; i++) {
@@ -79,7 +79,7 @@ export function GlobalTracker() {
           totalDistance += calculateDistance(point1.lat, point1.lng, point2.lat, point2.lng)
         }
       } else {
-        // Fallback: hitung jarak langsung
+        // Fallback: calculate direct distance
         totalDistance = calculateDistance(
           trip.departure.lat,
           trip.departure.lng,
@@ -88,46 +88,46 @@ export function GlobalTracker() {
         )
       }
 
-      // Dapatkan kecepatan realistis berdasarkan jarak dan jenis rute
+      // Get realistic speed based on distance and route type
       const realisticSpeed = getRealisticSpeed(totalDistance)
       
-      // Hitung waktu penyelesaian trip realistis dalam menit
+      // Calculate realistic completion time in minutes
       const estimatedTripTimeMinutes = (totalDistance / realisticSpeed) * 60
       
-      // Hitung progress per update (setiap 5 detik untuk gerakan real-time yang sangat smooth)
-      const updateIntervalSeconds = 5
+      // Calculate progress per update (every 15 seconds for smoother movement)
+      const updateIntervalSeconds = 15
       const totalUpdates = Math.ceil(estimatedTripTimeMinutes * 60 / updateIntervalSeconds)
       const progressPerUpdate = 100 / totalUpdates
 
       console.log(
-        `📊 ${tripName}: Jarak: ${totalDistance.toFixed(1)}km, Kecepatan: ${realisticSpeed}km/jam, Est. waktu: ${estimatedTripTimeMinutes.toFixed(0)}menit`
+        `📊 ${tripName}: Distance: ${totalDistance.toFixed(1)}km, Speed: ${realisticSpeed}km/h, Est. time: ${estimatedTripTimeMinutes.toFixed(0)}min`
       )
 
       let currentSpeed = realisticSpeed
 
       const interval = setInterval(async () => {
         try {
-          // Dapatkan data trip saat ini
+          // Get current trip data
           const { data: currentTrip, error } = await supabase.from("trips").select("*").eq("id", trip.id).single()
           if (error || !currentTrip || currentTrip.status !== "IN_PROGRESS") {
-            console.log("❌ Trip tidak aktif, menghentikan tracking:", tripName)
+            console.log("❌ Trip not active, stopping tracking:", tripName)
             stopTracking(trip.id)
             return
           }
 
-          // Hitung AKURAT elapsed time dari stored start time
+          // Calculate ACCURATE elapsed time from stored start time
           const startTime = tripStartTimes.get(trip.id) || actualStartTime
           const elapsedTimeMs = Date.now() - startTime
           const elapsedTimeMinutes = elapsedTimeMs / (1000 * 60)
 
-          // Variasi kecepatan sedikit untuk realisme (+/- 5 km/jam)
+          // Vary speed slightly for realism (+/- 5 km/h)
           const speedVariation = (Math.random() - 0.5) * 10
           currentSpeed = Math.max(15, Math.min(90, realisticSpeed + speedVariation))
 
-          // Hitung progress baru berdasarkan timing realistis
+          // Calculate new progress based on realistic timing
           const newProgress = Math.min(100, currentTrip.progress + progressPerUpdate)
 
-          // Hitung posisi saat ini berdasarkan rute
+          // Calculate current position based on route
           let currentLat = currentTrip.current_lat
           let currentLng = currentTrip.current_lng
           if (currentTrip.route && Array.isArray(currentTrip.route) && currentTrip.route.length > 0) {
@@ -137,7 +137,7 @@ export function GlobalTracker() {
             currentLng = currentPosition.lng
           }
 
-          // Update progress trip dengan kecepatan realistis
+          // Update trip progress with realistic speed
           const updates: Partial<Trip> = {
             progress: newProgress,
             current_lat: currentLat,
@@ -145,89 +145,79 @@ export function GlobalTracker() {
             speed: Math.round(currentSpeed),
           }
 
-          // Jika selesai, tandai sebagai selesai tapi tetap bus di tujuan
+          // If completed, mark as completed
           if (newProgress >= 100) {
             updates.status = "COMPLETED"
             updates.end_time = new Date().toISOString()
-            
-            // Update bus menjadi tidak aktif tapi tetap lokasi di tujuan
-            await updateBusStatus(trip.bus_id, false)
-            
             toast({
-              title: "✅ Trip Selesai",
-              description: `${tripName} telah sampai tujuan dan parkir di sana`,
+              title: "✅ Trip Completed",
+              description: `${tripName} has reached destination`,
               variant: "success",
             })
-            
-            // Tetap lokasi bus di tujuan (jangan hapus)
-            if (currentLat && currentLng) {
-              await updateBusLocation({
-                bus_id: trip.bus_id,
-                trip_id: trip.id,
-                lat: currentLat,
-                lng: currentLng,
-                progress: 100,
-                elapsed_time_minutes: elapsedTimeMinutes,
-                timestamp: Date.now(),
-              })
-            }
-            
-            stopTracking(trip.id)
-          } else {
-            // Update di database untuk trip yang sedang berjalan
-            await updateTrip(trip.id, updates)
-
-            // Update lokasi bus untuk tracking real-time dengan AKURAT elapsed time
-            if (currentLat && currentLng) {
-              await updateBusLocation({
-                bus_id: trip.bus_id,
-                trip_id: trip.id,
-                lat: currentLat,
-                lng: currentLng,
-                progress: newProgress,
-                elapsed_time_minutes: elapsedTimeMinutes,
-                timestamp: Date.now(),
-              })
-            }
           }
 
-          const formattedTime = `${Math.floor(elapsedTimeMinutes / 60)}j ${Math.floor(elapsedTimeMinutes % 60)}m`
-          console.log(`📊 ${tripName}: ${newProgress.toFixed(1)}% (${formattedTime}) - ${currentSpeed.toFixed(0)}km/jam`)
+          // Update in database
+          await updateTrip(trip.id, updates)
+
+          // Update bus location for real-time tracking with ACCURATE elapsed time
+          if (currentLat && currentLng) {
+            await updateBusLocation({
+              bus_id: trip.bus_id,
+              trip_id: trip.id,
+              lat: currentLat,
+              lng: currentLng,
+              progress: newProgress,
+              elapsed_time_minutes: elapsedTimeMinutes, // Use accurate elapsed time
+              timestamp: Date.now(),
+            })
+          }
+
+          // If completed, clean up
+          if (newProgress >= 100) {
+            await updateBusStatus(trip.bus_id, false)
+            setTimeout(async () => {
+              await deleteBusLocation(trip.bus_id)
+            }, 10000) // Remove after 10 seconds
+            stopTracking(trip.id)
+          }
+
+          const formattedTime = `${Math.floor(elapsedTimeMinutes / 60)}h ${Math.floor(elapsedTimeMinutes % 60)}m`
+          console.log(`📊 ${tripName}: ${newProgress.toFixed(1)}% (${formattedTime}) - ${currentSpeed.toFixed(0)}km/h`)
         } catch (trackingError) {
-          console.error("❌ Error dalam global tracking:", trackingError)
+          console.error("❌ Error in global tracking:", trackingError)
         }
-      }, updateIntervalSeconds * 1000) // Update setiap 5 detik untuk gerakan real-time yang sangat smooth
+      }, updateIntervalSeconds * 1000) // Update every 15 seconds for smooth movement
 
       trackingIntervals.set(trip.id, interval)
-      console.log(`✅ Global tracking dimulai untuk: ${tripName} dengan kecepatan realistis`)
+      console.log(`✅ Global tracking started for: ${tripName} at realistic speed`)
     },
     [toast],
   )
 
-  // Hentikan tracking untuk trip tertentu
+  // Stop tracking for a specific trip
   const stopTracking = useCallback((tripId: string) => {
     const interval = trackingIntervals.get(tripId)
     if (interval) {
       clearInterval(interval)
       trackingIntervals.delete(tripId)
-      tripStartTimes.delete(tripId) // Bersihkan penyimpanan start time
-      console.log("🛑 Global tracking dihentikan untuk:", tripId.slice(0, 8))
+      tripStartTimes.delete(tripId) // Clean up start time storage
+      console.log("🛑 Global tracking stopped for:", tripId.slice(0, 8))
     }
   }, [])
 
-  // Inisialisasi tracking saat mount dengan enhanced real-time subscriptions
+  // Initialize tracking on mount
   useEffect(() => {
     if (isInitialized.current) return
     isInitialized.current = true
-    console.log("🔄 Menginisialisasi Global Tracker dengan enhanced real-time...")
+    console.log("🔄 Initializing Global Tracker with realistic timing...")
 
-    // Mulai tracking untuk trip yang sedang berjalan
+    // Start tracking for existing in-progress trips
     const checkAndStartTracking = async () => {
-      // Tunggu store terisi
+      // Wait for store to be populated
       setTimeout(() => {
         const trips = realtimeStore.getTrips()
         const inProgressTrips = trips.filter((trip) => trip.status === "IN_PROGRESS")
-        console.log(`Ditemukan ${inProgressTrips.length} trip yang sedang berjalan`)
+        console.log(`Found ${inProgressTrips.length} in-progress trips`)
         
         inProgressTrips.forEach((trip) => {
           if (!trackingIntervals.has(trip.id)) {
@@ -237,117 +227,73 @@ export function GlobalTracker() {
         
         if (inProgressTrips.length > 0) {
           toast({
-            title: "🚌 Real-time Tracking Aktif",
-            description: `Memantau ${inProgressTrips.length} trip dengan update langsung setiap 5 detik`,
+            title: "🚌 Tracking Resumed",
+            description: `Monitoring ${inProgressTrips.length} trips with synced timing`,
             variant: "default",
           })
         }
-      }, 1000)
+      }, 1000) // Wait 1 second for initial data to load
     }
 
-    // Pengecekan awal
+    // Initial check
     checkAndStartTracking()
 
-    // Enhanced real-time subscription ke perubahan trip
+    // Subscribe to trip changes
     const unsubscribe = realtimeStore.subscribe(() => {
       const trips = realtimeStore.getTrips()
       const inProgressTrips = trips.filter((trip) => trip.status === "IN_PROGRESS")
       const currentlyTracked = Array.from(trackingIntervals.keys())
 
-      // Mulai tracking untuk trip baru yang sedang berjalan
+      // Start tracking for new in-progress trips
       inProgressTrips.forEach((trip) => {
         if (!currentlyTracked.includes(trip.id)) {
-          console.log("🆕 Trip baru terdeteksi untuk real-time tracking:", trip.id.slice(0, 8))
+          console.log("🆕 New trip to track:", trip.id.slice(0, 8))
           startTracking(trip)
         }
       })
 
-      // Hentikan tracking untuk trip yang tidak lagi berjalan
+      // Stop tracking for trips that are no longer in progress
       currentlyTracked.forEach((tripId) => {
         const trip = trips.find((t) => t.id === tripId)
         if (!trip || trip.status !== "IN_PROGRESS") {
-          console.log("🛑 Menghentikan tracking untuk trip selesai/dibatalkan:", tripId.slice(0, 8))
+          console.log("🛑 Stopping tracking for completed/cancelled trip:", tripId.slice(0, 8))
           stopTracking(tripId)
         }
       })
     })
 
-    // Set up monitoring tambahan real-time untuk lokasi bus (force UI update setiap detik)
-    const locationUpdateInterval = setInterval(() => {
-      // Force notifikasi kecil untuk memastikan UI terupdate
-      const currentLocations = realtimeStore.getBusLocations()
-      realtimeStore.setBusLocations([...currentLocations])
-    }, 1000) // Setiap 1 detik pastikan UI terupdate
-
-    // Cleanup saat unmount
+    // Cleanup on unmount
     return () => {
-      console.log("🧹 Membersihkan Global Tracker")
+      console.log("🧹 Cleaning up Global Tracker")
       trackingIntervals.forEach((interval) => clearInterval(interval))
       trackingIntervals.clear()
       tripStartTimes.clear()
-      clearInterval(locationUpdateInterval)
       isInitialized.current = false
       unsubscribe()
     }
   }, [startTracking, stopTracking, toast])
 
-  // Handle penempatan bus untuk trip baru
-  useEffect(() => {
-    const handleNewTrips = () => {
-      const trips = realtimeStore.getTrips()
-      const buses = realtimeStore.getBuses()
-  
-      trips
-        .filter(trip => trip.status === "PENDING")
-        .forEach(async (trip) => {
-          const bus = buses.find(b => b.id === trip.bus_id)
-          if (bus && !bus.is_active) {
-            try {
-              await updateBusLocation({
-                bus_id: trip.bus_id,
-                trip_id: trip.id,
-                lat: trip.departure.lat,
-                lng: trip.departure.lng,
-                progress: 0,
-                elapsed_time_minutes: 0,
-                timestamp: Date.now(),
-              })
-              console.log(`📍 Bus diposisikan di keberangkatan: ${trip.departure.name}`)
-            } catch (error) {
-              console.error("Error memposisikan bus:", error)
-            }
-          }
-        })
-    }
-  
-    const unsubscribe = realtimeStore.subscribe(handleNewTrips)
-  
-    return () => {
-      unsubscribe() // jalankan saja, jangan return
-    }
-  }, [])  
-
-  return null // Komponen hanya untuk logic
+  return null // This is a logic-only component
 }
 
-// Export fungsi untuk kontrol manual dengan enhanced bus positioning
+// Export functions for manual control with enhanced timing
 export const startTripTracking = (trip: Trip) => {
   const buses = realtimeStore.getBuses()
   const bus = buses.find((b) => b.id === trip.bus_id)
   const tripName = bus?.nickname || trip.id.slice(0, 8)
   console.log("🚀 Manual start tracking:", tripName)
 
-  // Hentikan interval yang ada
+  // Clear existing interval
   const existingInterval = trackingIntervals.get(trip.id)
   if (existingInterval) {
     clearInterval(existingInterval)
   }
 
-  // Simpan start time untuk elapsed time yang akurat
+  // Store start time for accurate elapsed time
   const startTime = trip.start_time ? new Date(trip.start_time).getTime() : Date.now()
   tripStartTimes.set(trip.id, startTime)
 
-  // Hitung timing realistis berdasarkan jarak
+  // Calculate realistic timing based on distance
   let totalDistance = 0
   if (trip.route && trip.route.length > 1) {
     for (let i = 0; i < trip.route.length - 1; i++) {
@@ -366,7 +312,7 @@ export const startTripTracking = (trip: Trip) => {
 
   const realisticSpeed = getRealisticSpeed(totalDistance)
   const estimatedTripTimeMinutes = (totalDistance / realisticSpeed) * 60
-  const updateIntervalSeconds = 5 // Update lebih cepat untuk smooth real-time
+  const updateIntervalSeconds = 15
   const totalUpdates = Math.ceil(estimatedTripTimeMinutes * 60 / updateIntervalSeconds)
   const progressPerUpdate = 100 / totalUpdates
 
@@ -374,12 +320,12 @@ export const startTripTracking = (trip: Trip) => {
     try {
       const { data: currentTrip, error } = await supabase.from("trips").select("*").eq("id", trip.id).single()
       if (error || !currentTrip || currentTrip.status !== "IN_PROGRESS") {
-        console.log("❌ Trip tidak aktif, menghentikan manual tracking:", tripName)
+        console.log("❌ Trip not active, stopping manual tracking:", tripName)
         stopTripTracking(trip.id)
         return
       }
 
-      // Hitung elapsed time yang akurat
+      // Calculate accurate elapsed time
       const tripStartTime = tripStartTimes.get(trip.id) || startTime
       const elapsedTimeMs = Date.now() - tripStartTime
       const elapsedTimeMinutes = elapsedTimeMs / (1000 * 60)
@@ -405,9 +351,6 @@ export const startTripTracking = (trip: Trip) => {
       if (newProgress >= 100) {
         updates.status = "COMPLETED"
         updates.end_time = new Date().toISOString()
-        
-        // Tetap bus di tujuan, jangan kembali ke garasi
-        await updateBusStatus(trip.bus_id, false)
       }
 
       await updateTrip(trip.id, updates)
@@ -419,23 +362,27 @@ export const startTripTracking = (trip: Trip) => {
           lat: currentLat,
           lng: currentLng,
           progress: newProgress,
-          elapsed_time_minutes: elapsedTimeMinutes,
+          elapsed_time_minutes: elapsedTimeMinutes, // Accurate elapsed time
           timestamp: Date.now(),
         })
       }
 
       if (newProgress >= 100) {
+        await updateBusStatus(trip.bus_id, false)
+        setTimeout(async () => {
+          await deleteBusLocation(trip.bus_id)
+        }, 10000)
         stopTripTracking(trip.id)
       }
 
       console.log(`📊 Manual ${tripName}: ${newProgress.toFixed(1)}% (${Math.floor(elapsedTimeMinutes)}m)`)
     } catch (manualError) {
-      console.error("❌ Error dalam manual tracking:", manualError)
+      console.error("❌ Error in manual tracking:", manualError)
     }
   }, updateIntervalSeconds * 1000)
 
   trackingIntervals.set(trip.id, interval)
-  console.log("✅ Manual tracking dimulai untuk:", tripName)
+  console.log("✅ Manual tracking started for:", tripName)
 }
 
 export const stopTripTracking = (tripId: string) => {
@@ -444,6 +391,6 @@ export const stopTripTracking = (tripId: string) => {
     clearInterval(interval)
     trackingIntervals.delete(tripId)
     tripStartTimes.delete(tripId)
-    console.log("🛑 Manual tracking dihentikan untuk:", tripId.slice(0, 8))
+    console.log("🛑 Manual tracking stopped for:", tripId.slice(0, 8))
   }
 }

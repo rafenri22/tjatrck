@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Loading } from "@/components/ui/loading"
 import { useToast } from "@/hooks/use-toast"
-import { ArrowLeft, Plus, BusIcon, Navigation, Trash2, Play, Upload, MapPin, Clock, Square, AlertCircle, CheckCircle, XCircle, RefreshCw, Server, Wifi, WifiOff, Heart, Zap, Router } from 'lucide-react'
+import { ArrowLeft, Plus, BusIcon, Navigation, Trash2, Play, Upload, MapPin, Clock, Square, AlertCircle, CheckCircle, XCircle, RefreshCw, Server, Wifi, WifiOff, Heart, Zap } from 'lucide-react'
 import Link from "next/link"
 import Image from "next/image"
 
@@ -136,8 +136,8 @@ export default function ManagePage() {
           
           if (payload.old?.is_active !== updatedBus.is_active) {
             toast({
-              title: updatedBus.is_active ? "🚀 Bus Departed" : "🏠 Bus Status Updated",
-              description: `${updatedBus.nickname} is now ${updatedBus.is_active ? "on trip" : "available"}`,
+              title: updatedBus.is_active ? "🚀 Bus Departed" : "🏠 Bus Returned",
+              description: `${updatedBus.nickname} is now ${updatedBus.is_active ? "on trip" : "in garage"}`,
               variant: "default",
             })
           }
@@ -320,15 +320,15 @@ export default function ManagePage() {
       }
       
       toast({
-        title: "🛣️ Menghitung Rute Tol Cerdas",
-        description: "Mencari rute optimal dengan informasi gerbang tol terlengkap...",
+        title: "🛣️ Calculating Highway Route",
+        description: "Finding optimal toll road route...",
         variant: "default",
       })
       
-      // Calculate route using enhanced routing with comprehensive toll data
+      // Calculate route using enhanced routing with toll preference
       const routePromise = calculateRoute(tripForm.departure, tripForm.stops, tripForm.destination)
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Route calculation timeout')), 25000)
+        setTimeout(() => reject(new Error('Route calculation timeout')), 20000)
       )
       
       const routeData = await Promise.race([routePromise, timeoutPromise]) as any
@@ -336,15 +336,13 @@ export default function ManagePage() {
       // Create trip with route data
       const newTrip = await createTrip(tripForm)
       
-      // Update trip with enhanced route data including toll information
+      // Update trip with enhanced route data
       await supabase
         .from("trips")
         .update({
           route: routeData.coordinates,
-          distance: routeData.distance,  
+          distance: routeData.distance,
           estimated_duration: routeData.duration,
-          toll_info: routeData.tollInfo, // Info gerbang tol
-          toll_route: routeData.tollRoute, // Array rute gerbang tol
         })
         .eq("id", newTrip.id)
       
@@ -356,18 +354,19 @@ export default function ManagePage() {
         destination: { name: "", lat: 0, lng: 0 },
       })
       
-      const tollInfo = routeData.tollInfo || "Rute langsung (tanpa tol)"
+      const tollInfo = routeData.tollGates?.length > 0 ? 
+        ` via ${routeData.tollGates.length} toll gates` : ""
       
       toast({
-        title: "✅ Trip Berhasil Dibuat",
-        description: `Rute: ${tripForm.departure.name} → ${tripForm.destination.name}. ${tollInfo}`,
+        title: "✅ Trip Created Successfully",
+        description: `Route: ${tripForm.departure.name} → ${tripForm.destination.name}${tollInfo}`,
         variant: "success",
       })
     } catch (tripError) {
       console.error("Failed to create trip:", tripError)
       toast({
-        title: "❌ Gagal Membuat Trip",
-        description: tripError instanceof Error ? tripError.message : "Silakan periksa rute dan coba lagi",
+        title: "❌ Failed to Create Trip",
+        description: tripError instanceof Error ? tripError.message : "Please check your route and try again",
         variant: "destructive",
       })
     } finally {
@@ -390,7 +389,7 @@ export default function ManagePage() {
       await backendApi.startTrip(trip.id)
       toast({
         title: "🚀 Trip Started",
-        description: "Bus is now being tracked with enhanced realistic timing and will park at destination",
+        description: "Bus is now being tracked with realistic highway timing",
         variant: "success",
       })
     } catch (startError) {
@@ -404,7 +403,7 @@ export default function ManagePage() {
   }, [backendStatus, toast])
 
   const handleCancelTrip = useCallback(async (trip: Trip) => {
-    if (!confirm("Are you sure you want to cancel this trip? The bus will return to garage.")) return
+    if (!confirm("Are you sure you want to cancel this trip?")) return
     try {
       if (backendStatus !== "connected") {
         toast({
@@ -506,7 +505,7 @@ export default function ManagePage() {
     await loadData(true)
   }, [loadData])
 
-  // Calculate enhanced stats
+  // Calculate stats
   const availableBuses = buses.filter((bus) => !bus.is_active)
   const activeTrips = trips.filter((trip) => trip.status === "IN_PROGRESS")
   const completedTrips = trips.filter((trip) => trip.status === "COMPLETED")
@@ -516,7 +515,7 @@ export default function ManagePage() {
     return (
       <div className="h-screen flex items-center justify-center bg-gray-50">
         <div className="animate-fadeIn">
-          <Loading text="Loading enhanced admin panel..." size="lg" />
+          <Loading text="Loading admin panel..." size="lg" />
         </div>
       </div>
     )
@@ -524,7 +523,7 @@ export default function ManagePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Enhanced Header */}
+      {/* Header - Enhanced Mobile */}
       <header className="bg-white shadow-sm border-b p-responsive safe-area-inset-top z-10 no-select">
         <div className="flex items-center justify-between gap-responsive">
           <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
@@ -536,16 +535,15 @@ export default function ManagePage() {
               </Button>
             </Link>
             <div className="min-w-0 flex-1">
-              <h1 className="text-lg md:text-xl font-bold text-gray-900 truncate">Enhanced Bus Management</h1>
+              <h1 className="text-lg md:text-xl font-bold text-gray-900 truncate">Bus Management</h1>
               <div className="flex items-center gap-2 text-xs md:text-sm">
                 {backendStatus === "connected" ? (
                   <div className="flex items-center gap-1 md:gap-2 text-green-600">
                     <Server className="h-3 w-3 md:h-4 md:w-4" />
                     <Wifi className="h-2 w-2 md:h-3 md:w-3" />
                     <Zap className="h-2 w-2 md:h-3 md:w-3" />
-                    <Router className="h-2 w-2 md:h-3 md:w-3" />
-                    <span className="hidden sm:inline">Enhanced Backend Connected</span>
-                    <span className="sm:hidden">Enhanced</span>
+                    <span className="hidden sm:inline">Backend Connected</span>
+                    <span className="sm:hidden">Connected</span>
                   </div>
                 ) : backendStatus === "disconnected" ? (
                   <div className="flex items-center gap-1 md:gap-2 text-red-600">
@@ -601,20 +599,20 @@ export default function ManagePage() {
       </header>
 
       <div className="p-responsive safe-area-inset-bottom">
-        {/* Enhanced Backend Status Alert */}
+        {/* Backend Status Alert */}
         {backendStatus === "disconnected" && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg animate-fadeIn">
             <div className="flex items-center gap-2 text-red-800">
               <AlertCircle className="h-5 w-5 flex-shrink-0" />
-              <strong>Enhanced Backend Server Offline</strong>
+              <strong>Backend Server Offline</strong>
             </div>
             <p className="text-red-700 mt-1 text-sm">
-              Real-time tracking and enhanced features are disabled. Please start the backend server to enable full functionality including destination parking and toll road routing.
+              Real-time tracking is disabled. Please start the backend server to enable trip management.
             </p>
           </div>
         )}
 
-        {/* Enhanced Status Overview */}
+        {/* Status Overview - Enhanced Mobile */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4 mb-6">
           <Card className="p-3 md:p-4 bg-blue-50 border-blue-200">
             <div className="flex items-center gap-2 md:gap-3">
@@ -652,7 +650,7 @@ export default function ManagePage() {
           <Card className="p-3 md:p-4 bg-purple-50 border-purple-200">
             <div className="flex items-center gap-2 md:gap-3">
               <div className="p-1.5 md:p-2 bg-purple-100 rounded-lg flex-shrink-0">
-                <Router className="h-4 w-4 md:h-5 md:w-5 text-purple-600" />
+                <Navigation className="h-4 w-4 md:h-5 md:w-5 text-purple-600" />
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-xs md:text-sm text-purple-600">In Progress</p>
@@ -664,7 +662,7 @@ export default function ManagePage() {
 
         {activeTab === "buses" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Create Bus Form - Same as before */}
+            {/* Create Bus Form - Enhanced Mobile */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg md:text-xl">Add New Bus</CardTitle>
@@ -752,7 +750,7 @@ export default function ManagePage() {
               </CardContent>
             </Card>
 
-            {/* Bus List - Same as before */}
+            {/* Bus List - Enhanced Mobile */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg md:text-xl">Bus Fleet ({buses.length})</CardTitle>
@@ -791,7 +789,7 @@ export default function ManagePage() {
                           <div
                             className={`w-2 h-2 rounded-full ${bus.is_active ? "bg-green-500 animate-pulse" : "bg-gray-400"}`}
                           />
-                          {bus.is_active ? "On Trip" : "Available"}
+                          {bus.is_active ? "On Trip" : "In Garage"}
                         </span>
                       </div>
                       <Button 
@@ -819,20 +817,13 @@ export default function ManagePage() {
 
         {activeTab === "trips" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Enhanced Create Trip Form */}
+            {/* Create Trip Form - Enhanced Mobile */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg md:text-xl flex items-center gap-2">
-                  Create Enhanced Trip
-                  <span title="Uses favorite locations">
-                    <Heart className="h-4 w-4 text-red-500" />
-                  </span>
-                  <span title="Enhanced toll routing">
-                    <Router className="h-4 w-4 text-blue-500" />
-                  </span>
-                  <span title="Destination parking">
-                    <Zap className="h-4 w-4 text-yellow-500" />
-                  </span>
+                  Create New Trip
+                  <Heart className="h-4 w-4 text-red-500" title="Uses favorite locations" />
+                  <Zap className="h-4 w-4 text-yellow-500" title="Highway routing" />
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -856,7 +847,7 @@ export default function ManagePage() {
                     {availableBuses.length === 0 && (
                       <div className="flex items-center gap-2 mt-1 text-sm text-red-500">
                         <AlertCircle className="h-4 w-4" />
-                        No buses available. All buses are on trips or at destinations.
+                        No buses available. All buses are on trips.
                       </div>
                     )}
                   </div>
@@ -957,31 +948,24 @@ export default function ManagePage() {
                     {tripLoading ? (
                       <>
                         <Loading size="sm" />
-                        Calculating Enhanced Route...
+                        Creating Highway Route...
                       </>
                     ) : (
                       <>
                         <Plus className="h-4 w-4 mr-2" />
-                        Create Enhanced Trip
+                        Create Trip
                       </>
                     )}
                   </Button>
-                  
-                  <div className="text-xs text-gray-500 space-y-1">
-                    <p>✨ Enhanced features:</p>
-                    <p>• Intelligent toll road routing</p>
-                    <p>• Bus parks at destination when completed</p>
-                    <p>• Real-time speed and ETA calculations</p>
-                  </div>
                 </form>
               </CardContent>
             </Card>
 
-            {/* Enhanced Trip List */}
+            {/* Trip List - Enhanced Mobile */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between">
-                  <span className="text-lg md:text-xl">Enhanced Trip History ({trips.length})</span>
+                  <span className="text-lg md:text-xl">Trip History ({trips.length})</span>
                   <div className="flex gap-1 text-xs">
                     <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded">
                       Pending: {pendingTrips.length}
@@ -995,7 +979,7 @@ export default function ManagePage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3 max-h-96 overflow-y-auto scrollbar-thin">
-                  {trips.map((trip: any) => {
+                  {trips.map((trip) => {
                     const bus = buses.find((b) => b.id === trip.bus_id)
                     return (
                       <div key={trip.id} className="p-3 border rounded-lg animate-fadeIn">
@@ -1066,30 +1050,9 @@ export default function ManagePage() {
                           {trip.stops.length > 0 && (
                             <p className="flex items-start gap-2">
                               <Clock className="h-3 w-3 text-gray-400 mt-0.5 flex-shrink-0" />
-                              <span className="text-xs">Stops: {trip.stops.map((stop: any) => stop.name).join(", ")}</span>
+                              <span className="text-xs">Stops: {trip.stops.map((stop) => stop.name).join(", ")}</span>
                             </p>
                           )}
-                          
-                          {/* Info Gerbang Tol yang Dilalui */}
-                          {trip.toll_route && trip.toll_route.length > 0 && (
-                            <div className="bg-blue-50 p-2 rounded mt-2">
-                              <div className="flex items-center gap-1 mb-1">
-                                <Router className="h-3 w-3 text-blue-600" />
-                                <span className="text-xs font-medium text-blue-700">Gerbang Tol Dilalui:</span>
-                              </div>
-                              <div className="text-xs text-blue-600 space-y-0.5">
-                                {trip.toll_route.map((toll: string, index: number) => (
-                                  <div key={index} className="flex items-center gap-1">
-                                    <span className="w-3 h-3 bg-blue-200 rounded-full flex items-center justify-center text-xs font-bold text-blue-800 flex-shrink-0">
-                                      {index + 1}
-                                    </span>
-                                    <span className="truncate">{toll}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          
                           {trip.status === "IN_PROGRESS" && (
                             <div className="mt-2">
                               <div className="flex justify-between items-center mb-1">
@@ -1105,15 +1068,10 @@ export default function ManagePage() {
                               <div className="flex justify-between items-center mt-1 text-xs text-gray-500">
                                 <span>Speed: {trip.speed} km/h</span>
                                 <span className="flex items-center gap-1">
-                                  <Router className="h-3 w-3" />
-                                  Enhanced Route
+                                  <Zap className="h-3 w-3" />
+                                  Highway Route
                                 </span>
                               </div>
-                            </div>
-                          )}
-                          {trip.status === "COMPLETED" && (
-                            <div className="mt-2 p-2 bg-green-50 rounded text-xs text-green-700">
-                              ✅ Bus parked at destination
                             </div>
                           )}
                           {trip.distance && (
