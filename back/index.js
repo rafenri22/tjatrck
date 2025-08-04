@@ -44,9 +44,25 @@ const calculateDistance = (lat1, lng1, lat2, lng2) => {
 
 const toRadians = (degrees) => degrees * (Math.PI / 180)
 
-const getFixedSpeed = () => {
-  // Random speed between 100-120 km/h
-  return Math.floor(Math.random() * (120 - 100 + 1)) + 100
+// Realistic speed calculation based on route type and conditions
+const getRealisticSpeed = (distance) => {
+  let baseSpeed
+  
+  // Determine speed based on distance (route type)
+  if (distance < 50) {
+    // City routes: 25-40 km/h (traffic, stops)
+    baseSpeed = Math.floor(Math.random() * (40 - 25 + 1)) + 25
+  } else if (distance < 150) {
+    // Inter-city routes: 45-65 km/h (mixed roads)
+    baseSpeed = Math.floor(Math.random() * (65 - 45 + 1)) + 45
+  } else {
+    // Long distance routes: 60-80 km/h (highways with stops)
+    baseSpeed = Math.floor(Math.random() * (80 - 60 + 1)) + 60
+  }
+  
+  // Add random variation for traffic conditions (-10 to +5 km/h)
+  const variation = Math.floor(Math.random() * 16) - 10
+  return Math.max(20, Math.min(85, baseSpeed + variation)) // Keep within reasonable bounds
 }
 
 const formatElapsedTime = (minutes) => {
@@ -59,7 +75,7 @@ const formatElapsedTime = (minutes) => {
   return `${mins}m`
 }
 
-// Start tracking a trip
+// Start tracking a trip with realistic timing
 const startTripTracking = async (trip) => {
   console.log(`🚀 Starting backend tracking for trip: ${trip.id}`)
 
@@ -72,11 +88,8 @@ const startTripTracking = async (trip) => {
   const { data: bus } = await supabase.from("buses").select("*").eq("id", trip.bus_id).single()
 
   const tripName = bus?.nickname || trip.id.slice(0, 8)
-  const speed = getFixedSpeed() // Fixed speed at 120 km/h
 
-  console.log(`🏃 ${tripName} will travel at ${speed} km/h`)
-
-  // Calculate progress increment based on speed and route
+  // Calculate total distance
   let totalDistance = 0
   if (trip.route && trip.route.length > 1) {
     for (let i = 0; i < trip.route.length - 1; i++) {
@@ -94,16 +107,23 @@ const startTripTracking = async (trip) => {
     )
   }
 
-  // Calculate how much progress to add per second
-  // Distance covered per second = speed (km/h) / 3600 (seconds/hour)
-  const distancePerSecond = speed / 3600
-  const progressPerSecond = (distancePerSecond / totalDistance) * 100
+  // Get realistic speed based on distance
+  const realisticSpeed = getRealisticSpeed(totalDistance)
+  
+  // Calculate realistic completion time in minutes
+  const estimatedTripTimeMinutes = (totalDistance / realisticSpeed) * 60
+  
+  // Calculate progress per update (every 30 seconds for smoother movement)
+  const updateIntervalSeconds = 30
+  const totalUpdates = Math.ceil(estimatedTripTimeMinutes * 60 / updateIntervalSeconds)
+  const progressPerUpdate = 100 / totalUpdates
 
   console.log(
-    `📊 ${tripName}: Total distance: ${totalDistance.toFixed(2)}km, Progress per second: ${progressPerSecond.toFixed(4)}%`,
+    `📊 ${tripName}: Distance: ${totalDistance.toFixed(1)}km, Speed: ${realisticSpeed}km/h, Estimated time: ${estimatedTripTimeMinutes.toFixed(0)} minutes`
   )
 
   const startTime = Date.now()
+  let currentSpeed = realisticSpeed
 
   const interval = setInterval(async () => {
     try {
@@ -120,8 +140,12 @@ const startTripTracking = async (trip) => {
       const elapsedTimeMs = Date.now() - startTime
       const elapsedTimeMinutes = elapsedTimeMs / (1000 * 60)
 
+      // Vary speed slightly for realism (+/- 5 km/h)
+      const speedVariation = (Math.random() - 0.5) * 10
+      currentSpeed = Math.max(15, Math.min(90, realisticSpeed + speedVariation))
+
       // Calculate new progress
-      const newProgress = Math.min(100, currentTrip.progress + progressPerSecond)
+      const newProgress = Math.min(100, currentTrip.progress + progressPerUpdate)
 
       // Calculate current position based on route
       let currentLat = currentTrip.current_lat
@@ -139,14 +163,14 @@ const startTripTracking = async (trip) => {
         progress: newProgress,
         current_lat: currentLat,
         current_lng: currentLng,
-        speed: speed,
+        speed: Math.round(currentSpeed),
       }
 
       // If completed, mark as completed
       if (newProgress >= 100) {
         updates.status = "COMPLETED"
         updates.end_time = new Date().toISOString()
-        console.log(`✅ ${tripName}: Trip completed in ${formatElapsedTime(elapsedTimeMinutes)}`)
+        console.log(`✅ ${tripName}: Trip completed in ${formatElapsedTime(elapsedTimeMinutes)} (realistic timing)`)
       }
 
       // Update trip in database
@@ -174,24 +198,24 @@ const startTripTracking = async (trip) => {
         // Update bus status to inactive
         await supabase.from("buses").update({ is_active: false }).eq("id", trip.bus_id)
 
-        // Remove bus location after 5 seconds
+        // Remove bus location after 10 seconds
         setTimeout(async () => {
           await supabase.from("bus_locations").delete().eq("bus_id", trip.bus_id)
-        }, 5000)
+        }, 10000)
 
         stopTripTracking(trip.id)
       }
 
       console.log(
-        `📊 ${tripName}: ${newProgress.toFixed(1)}% (${formatElapsedTime(elapsedTimeMinutes)}) - ${speed}km/h`,
+        `📊 ${tripName}: ${newProgress.toFixed(1)}% (${formatElapsedTime(elapsedTimeMinutes)}) - ${currentSpeed.toFixed(0)}km/h`
       )
     } catch (error) {
       console.error(`❌ Error tracking ${tripName}:`, error)
     }
-  }, 1000) // Update every second
+  }, updateIntervalSeconds * 1000) // Update every 30 seconds for realistic movement
 
   trackingIntervals.set(trip.id, interval)
-  activeTrips.set(trip.id, { ...trip, speed, startTime })
+  activeTrips.set(trip.id, { ...trip, speed: realisticSpeed, startTime, totalDistance, estimatedTime: estimatedTripTimeMinutes })
 }
 
 // Stop tracking a trip
@@ -228,7 +252,7 @@ const initializeTracking = async () => {
     }
 
     if (inProgressTrips && inProgressTrips.length > 0) {
-      console.log(`🚀 Found ${inProgressTrips.length} in-progress trips, starting tracking...`)
+      console.log(`🚀 Found ${inProgressTrips.length} in-progress trips, starting realistic tracking...`)
 
       for (const trip of inProgressTrips) {
         await startTripTracking(trip)
@@ -243,13 +267,23 @@ const initializeTracking = async () => {
 
 // API Routes
 app.get("/api/health", (req, res) => {
+  const activeTripsArray = Array.from(activeTrips.values()).map((trip) => ({
+    id: trip.id,
+    speed: trip.speed,
+    distance: trip.totalDistance,
+    estimatedTime: trip.estimatedTime,
+    elapsedMinutes: (Date.now() - trip.startTime) / (1000 * 60),
+  }))
+
   res.json({
     status: "OK",
     activeTrips: activeTrips.size,
     timestamp: new Date().toISOString(),
     supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ? "✅ Configured" : "❌ Missing",
     supabaseKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "✅ Configured" : "❌ Missing",
-    speed: "100-120 km/h (Random)",
+    trackingMode: "Realistic Speed (25-85 km/h)",
+    updateInterval: "30 seconds",
+    trips: activeTripsArray,
   })
 })
 
@@ -276,11 +310,14 @@ app.post("/api/trips/:tripId/start", async (req, res) => {
     // Update bus status
     await supabase.from("buses").update({ is_active: true }).eq("id", trip.bus_id)
 
-    // Start tracking
-    const tripSpeed = getFixedSpeed() // Fixed speed at 120 km/h
+    // Start realistic tracking
     await startTripTracking({ ...trip, status: "IN_PROGRESS" })
 
-    res.json({ success: true, message: `Trip started and tracking initiated at ${tripSpeed} km/h` })
+    res.json({ 
+      success: true, 
+      message: "Trip started with realistic speed tracking",
+      trackingMode: "Realistic timing based on distance and route type"
+    })
   } catch (error) {
     console.error("Error starting trip:", error)
     res.status(500).json({ error: "Failed to start trip" })
@@ -328,6 +365,8 @@ app.get("/api/trips/active", (req, res) => {
     id: trip.id,
     bus_id: trip.bus_id,
     speed: trip.speed,
+    totalDistance: trip.totalDistance,
+    estimatedTime: trip.estimatedTime,
     startTime: trip.startTime,
     elapsedMinutes: (Date.now() - trip.startTime) / (1000 * 60),
   }))
@@ -365,17 +404,18 @@ const setupRealtimeSubscriptions = () => {
 // Start server
 app.listen(PORT, async () => {
   console.log(`🚀 Bus Tracking Backend Server running on port ${PORT}`)
-  console.log(`📊 Health check: http://localhost:${PORT}/api/health}`)
+  console.log(`📊 Health check: http://localhost:${PORT}/api/health`)
   console.log(`🔧 Environment:`)
   console.log(`   - Supabase URL: ${process.env.NEXT_PUBLIC_SUPABASE_URL ? "✅ Configured" : "❌ Missing"}`)
   console.log(`   - Supabase Key: ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "✅ Configured" : "❌ Missing"}`)
-  console.log(`🚌 Speed: 120 km/h (Fixed)`)
+  console.log(`🚌 Tracking Mode: Realistic Speed (25-85 km/h based on route type)`)
+  console.log(`⏱️ Update Interval: 30 seconds for smooth movement`)
 
   // Initialize tracking and subscriptions
   await initializeTracking()
   setupRealtimeSubscriptions()
 
-  console.log("✅ Backend tracking system ready!")
+  console.log("✅ Backend tracking system ready with realistic timing!")
 })
 
 // Graceful shutdown

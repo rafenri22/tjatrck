@@ -5,8 +5,18 @@ import L from "leaflet"
 import "leaflet/dist/leaflet.css"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { X, MapPin, Search, Loader2 } from "lucide-react"
+import { X, MapPin, Search, Loader2, Heart, Star, Clock } from "lucide-react"
+import { Loading } from "@/components/ui/loading"
 import type { Location } from "@/types"
+import { 
+  getFavoriteLocations, 
+  addFavoriteLocation, 
+  removeFavoriteLocation, 
+  getMostUsedLocations,
+  searchFavoriteLocations,
+  getDefaultLocations,
+  type FavoriteLocation 
+} from "@/lib/favorite-locations"
 
 interface LocationPickerProps {
   onLocationSelect: (location: Location) => void
@@ -30,30 +40,6 @@ interface SearchResult {
   }
 }
 
-// Jakarta landmarks for quick selection
-const JAKARTA_LANDMARKS: Location[] = [
-  { name: "Terminal Kampung Rambutan", lat: -6.2615, lng: 106.8776 },
-  { name: "Terminal Lebak Bulus", lat: -6.2891, lng: 106.7749 },
-  { name: "Terminal Pulogadung", lat: -6.1951, lng: 106.8997 },
-  { name: "Terminal Kalideres", lat: -6.1385, lng: 106.7297 },
-  { name: "Terminal Blok M", lat: -6.2441, lng: 106.7991 },
-  { name: "Terminal Senen", lat: -6.1744, lng: 106.8456 },
-  { name: "Pasar Minggu", lat: -6.2476, lng: 106.8649 },
-  { name: "Fatmawati", lat: -6.2383, lng: 106.8226 },
-  { name: "Pondok Indah", lat: -6.2661, lng: 106.7834 },
-  { name: "Cawang", lat: -6.2146, lng: 106.8649 },
-  { name: "Semanggi", lat: -6.2088, lng: 106.8226 },
-  { name: "Tomang", lat: -6.1744, lng: 106.7834 },
-  { name: "Gambir", lat: -6.1754, lng: 106.8272 },
-  { name: "Thamrin", lat: -6.1944, lng: 106.8229 },
-  { name: "Sudirman", lat: -6.2088, lng: 106.8229 },
-  { name: "Kuningan", lat: -6.2297, lng: 106.8308 },
-  { name: "Menteng", lat: -6.1944, lng: 106.8272 },
-  { name: "Kemayoran", lat: -6.1598, lng: 106.8456 },
-  { name: "Kelapa Gading", lat: -6.1598, lng: 106.9056 },
-  { name: "Pluit", lat: -6.1167, lng: 106.7834 },
-]
-
 export default function LocationPicker({ onLocationSelect, onClose, title = "Select Location" }: LocationPickerProps) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<L.Map | null>(null)
@@ -63,13 +49,71 @@ export default function LocationPicker({ onLocationSelect, onClose, title = "Sel
   const [searchTerm, setSearchTerm] = useState("")
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [isSearching, setIsSearching] = useState(false)
-  const [activeTab, setActiveTab] = useState<"landmarks" | "search">("landmarks")
+  const [activeTab, setActiveTab] = useState<"favorites" | "search" | "popular">("favorites")
+  const [favoriteLocations, setFavoriteLocations] = useState<FavoriteLocation[]>([])
+  const [isLoadingFavorites, setIsLoadingFavorites] = useState(true)
 
-  const filteredLandmarks = JAKARTA_LANDMARKS.filter((landmark) =>
-    landmark.name.toLowerCase().includes(searchTerm.toLowerCase()),
-  )
+  // Load favorite locations
+  useEffect(() => {
+    const loadFavorites = async () => {
+      setIsLoadingFavorites(true)
+      try {
+        const favorites = await getFavoriteLocations()
+        const defaults = getDefaultLocations()
+        
+        // Combine user favorites with defaults, avoiding duplicates
+        const combined: FavoriteLocation[] = [...favorites];
 
-  // Real-time search as user types (like Google Maps)
+        defaults.forEach((defaultLoc: { name: any }) => {
+          if (!combined.some(fav => fav.name === defaultLoc.name)) {
+            const filledDefault: FavoriteLocation = {
+              id: crypto.randomUUID(), // atau string acak
+              name: defaultLoc.name,
+              lat: 0, // default lat
+              lng: 0, // default lng
+              category: 'custom', // default category
+              usage_count: 0,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            };
+
+            combined.push(filledDefault);
+          }
+        })
+        
+        setFavoriteLocations(combined.sort((a, b) => b.usage_count - a.usage_count))
+      } catch (error) {
+        console.error('Error loading favorites:', error)
+        setFavoriteLocations(getDefaultLocations())
+      } finally {
+        setIsLoadingFavorites(false)
+      }
+    }
+
+    loadFavorites()
+  }, [])
+
+  // Filter locations based on search and active tab
+  const getFilteredLocations = useCallback(() => {
+    let locations = favoriteLocations
+    
+    if (searchTerm.length >= 2) {
+      locations = locations.filter(location =>
+        location.name.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+    }
+
+    switch (activeTab) {
+      case 'favorites':
+        return locations.filter(loc => !loc.id.startsWith('default-')).slice(0, 20)
+      case 'popular':
+        return locations.filter(loc => loc.usage_count > 50).slice(0, 15)
+      default:
+        return locations.slice(0, 25)
+    }
+  }, [favoriteLocations, searchTerm, activeTab])
+
+  // Real-time search as user types
   const performSearch = useCallback(
     async (query: string) => {
       if (query.length < 2) return
@@ -84,7 +128,7 @@ export default function LocationPicker({ onLocationSelect, onClose, title = "Sel
                 q: `${query}, Indonesia`,
                 format: "json",
                 addressdetails: "1",
-                limit: "5",
+                limit: "8",
                 countrycodes: "id",
                 bounded: "1",
                 viewbox: "95,-11,141,6", // Indonesia bounding box
@@ -135,7 +179,7 @@ export default function LocationPicker({ onLocationSelect, onClose, title = "Sel
         setSearchResults(sortedResults)
 
         // Auto-switch to search tab if results found
-        if (sortedResults.length > 0 && activeTab === "landmarks") {
+        if (sortedResults.length > 0 && activeTab !== "search") {
           setActiveTab("search")
         }
       } catch (searchError) {
@@ -162,8 +206,19 @@ export default function LocationPicker({ onLocationSelect, onClose, title = "Sel
   useEffect(() => {
     if (!mapRef.current || typeof window === "undefined") return
 
-    // Initialize map
-    const map = L.map(mapRef.current).setView([-6.2088, 106.8456], 11)
+    // Initialize map with better mobile handling
+    const map = L.map(mapRef.current, {
+      center: [-6.2088, 106.8456], // Jakarta center
+      zoom: window.innerWidth < 768 ? 10 : 11,
+      minZoom: 5,
+      maxZoom: 18,
+      zoomControl: true,
+      touchZoom: true,
+      doubleClickZoom: true,
+      scrollWheelZoom: true,
+      dragging: true,
+    })
+
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: "© OpenStreetMap contributors",
     }).addTo(map)
@@ -184,22 +239,38 @@ export default function LocationPicker({ onLocationSelect, onClose, title = "Sel
       markerRef.current = marker
     })
 
-    // Add landmark markers
-    JAKARTA_LANDMARKS.forEach((landmark) => {
-      const landmarkIcon = L.divIcon({
+    // Add favorite location markers
+    favoriteLocations.slice(0, 20).forEach((location) => {
+      const isUserFavorite = !location.id.startsWith('default-')
+      const icon = L.divIcon({
         html: `
-          <div class="bg-green-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shadow-lg border border-white">
-            📍
+          <div class="bg-${isUserFavorite ? 'red' : 'blue'}-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shadow-lg border border-white cursor-pointer hover:scale-110 transition-transform">
+            ${isUserFavorite ? '❤️' : '📍'}
           </div>
         `,
-        className: "landmark-marker",
+        className: "favorite-marker",
         iconSize: [24, 24],
         iconAnchor: [12, 12],
       })
 
-      L.marker([landmark.lat, landmark.lng], { icon: landmarkIcon })
-        .bindPopup(`<strong>${landmark.name}</strong>`)
+      const marker = L.marker([location.lat, location.lng], { icon })
+        .bindPopup(`
+          <div class="p-2">
+            <strong>${location.name}</strong>
+            <br>
+            <small>Used ${location.usage_count} times</small>
+          </div>
+        `)
         .addTo(map)
+
+      // Add click handler for quick selection
+      marker.on('click', () => {
+        handleLocationSelect({
+          name: location.name,
+          lat: location.lat,
+          lng: location.lng
+        })
+      })
     })
 
     return () => {
@@ -208,9 +279,9 @@ export default function LocationPicker({ onLocationSelect, onClose, title = "Sel
         mapInstanceRef.current = null
       }
     }
-  }, [locationName])
+  }, [locationName, favoriteLocations])
 
-  const handleLocationSelect = (location: Location) => {
+  const handleLocationSelect = useCallback((location: Location) => {
     setSelectedLocation(location)
     setLocationName(location.name)
     if (mapInstanceRef.current) {
@@ -224,9 +295,9 @@ export default function LocationPicker({ onLocationSelect, onClose, title = "Sel
       // Center map on location
       mapInstanceRef.current.setView([location.lat, location.lng], 15)
     }
-  }
+  }, [])
 
-  const handleSearchResultSelect = (result: SearchResult) => {
+  const handleSearchResultSelect = useCallback((result: SearchResult) => {
     // Create a cleaner name from the search result
     const nameParts = result.display_name.split(",")
     const cleanName = nameParts.slice(0, 2).join(", ").trim()
@@ -236,33 +307,79 @@ export default function LocationPicker({ onLocationSelect, onClose, title = "Sel
       lng: Number.parseFloat(result.lon),
     }
     handleLocationSelect(location)
-  }
+  }, [handleLocationSelect])
 
-  const handleConfirm = () => {
+  const handleAddToFavorites = useCallback(async () => {
+    if (!selectedLocation) return
+    
+    try {
+      await addFavoriteLocation({
+        name: selectedLocation.name,
+        lat: selectedLocation.lat,
+        lng: selectedLocation.lng,
+        category: 'custom'
+      })
+      
+      // Reload favorites
+      const favorites = await getFavoriteLocations()
+      setFavoriteLocations(favorites.sort((a: { usage_count: number }, b: { usage_count: number }) => b.usage_count - a.usage_count))
+    } catch (error) {
+      console.error('Error adding to favorites:', error)
+    }
+  }, [selectedLocation])
+
+  const handleRemoveFromFavorites = useCallback(async (id: string) => {
+    try {
+      await removeFavoriteLocation(id)
+      
+      // Reload favorites
+      const favorites = await getFavoriteLocations()
+      setFavoriteLocations(favorites.sort((a: { usage_count: number }, b: { usage_count: number }) => b.usage_count - a.usage_count))
+    } catch (error) {
+      console.error('Error removing from favorites:', error)
+    }
+  }, [])
+
+  const handleConfirm = useCallback(async () => {
     if (selectedLocation) {
+      // Add to favorites if it's a new custom location
+      if (!favoriteLocations.some(fav => fav.name === selectedLocation.name)) {
+        await handleAddToFavorites()
+      } else {
+        // Update usage count
+        await addFavoriteLocation({
+          name: selectedLocation.name,
+          lat: selectedLocation.lat,
+          lng: selectedLocation.lng,
+        })
+      }
+      
       onLocationSelect(selectedLocation)
     }
-  }
+  }, [selectedLocation, favoriteLocations, handleAddToFavorites, onLocationSelect])
+
+  const filteredLocations = getFilteredLocations()
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg w-full max-w-6xl h-[85vh] flex flex-col">
-        {/* Header */}
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg w-full max-w-6xl h-[90vh] flex flex-col animate-fadeIn">
+        {/* Header - Mobile Optimized */}
         <div className="flex items-center justify-between p-4 border-b">
-          <h2 className="text-lg font-semibold">{title}</h2>
-          <Button variant="ghost" size="sm" onClick={onClose}>
+          <h2 className="text-lg font-semibold truncate">{title}</h2>
+          <Button variant="ghost" size="sm" onClick={onClose} className="btn-touch">
             <X className="h-4 w-4" />
           </Button>
         </div>
+
         <div className="flex flex-1 overflow-hidden">
-          {/* Sidebar */}
-          <div className="w-96 border-r flex flex-col">
-            {/* Search Input */}
-            <div className="p-4 border-b space-y-3">
+          {/* Sidebar - Responsive */}
+          <div className="w-full md:w-96 border-r flex flex-col">
+            {/* Search Input - Enhanced Mobile */}
+            <div className="p-4 border-b space-y-3 form-mobile">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                 <Input
-                  placeholder="Search locations (e.g., Kemang, Cibubur)..."
+                  placeholder="Search locations..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-10"
@@ -277,87 +394,150 @@ export default function LocationPicker({ onLocationSelect, onClose, title = "Sel
                 onChange={(e) => setLocationName(e.target.value)}
               />
             </div>
-            {/* Tabs */}
+
+            {/* Tabs - Mobile Optimized */}
             <div className="flex border-b">
               <button
-                onClick={() => setActiveTab("landmarks")}
-                className={`flex-1 px-4 py-2 text-sm font-medium ${
-                  activeTab === "landmarks"
+                onClick={() => setActiveTab("favorites")}
+                className={`flex-1 px-3 py-2 text-sm font-medium btn-touch ${
+                  activeTab === "favorites"
                     ? "bg-blue-50 text-blue-600 border-b-2 border-blue-600"
                     : "text-gray-500 hover:text-gray-700"
                 }`}
               >
-                Quick Select ({filteredLandmarks.length})
+                <Heart className="h-4 w-4 mx-auto mb-1" />
+                <span className="hidden sm:inline">Favorites</span>
+              </button>
+              <button
+                onClick={() => setActiveTab("popular")}
+                className={`flex-1 px-3 py-2 text-sm font-medium btn-touch ${
+                  activeTab === "popular"
+                    ? "bg-blue-50 text-blue-600 border-b-2 border-blue-600"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                <Star className="h-4 w-4 mx-auto mb-1" />
+                <span className="hidden sm:inline">Popular</span>
               </button>
               <button
                 onClick={() => setActiveTab("search")}
-                className={`flex-1 px-4 py-2 text-sm font-medium ${
+                className={`flex-1 px-3 py-2 text-sm font-medium btn-touch ${
                   activeTab === "search"
                     ? "bg-blue-50 text-blue-600 border-b-2 border-blue-600"
                     : "text-gray-500 hover:text-gray-700"
                 }`}
               >
-                Search Results ({searchResults.length})
+                <Search className="h-4 w-4 mx-auto mb-1" />
+                <span className="hidden sm:inline">Search ({searchResults.length})</span>
+                <span className="sm:hidden">({searchResults.length})</span>
               </button>
             </div>
-            {/* Content */}
-            <div className="flex-1 overflow-y-auto p-4">
-              {activeTab === "landmarks" && (
-                <div className="space-y-2">
-                  {filteredLandmarks.map((landmark) => (
-                    <button
-                      key={landmark.name}
-                      onClick={() => handleLocationSelect(landmark)}
-                      className="w-full text-left p-3 rounded-lg hover:bg-gray-100 text-sm transition-colors border"
-                    >
-                      <div className="flex items-center gap-2">
-                        <MapPin className="h-4 w-4 text-green-600 flex-shrink-0" />
-                        <span className="truncate font-medium">{landmark.name}</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {activeTab === "search" && (
-                <div className="space-y-2">
-                  {searchResults.map((result) => {
-                    const nameParts = result.display_name.split(",")
-                    const mainName = nameParts[0]
-                    const subName = nameParts.slice(1, 3).join(",").trim()
-                    return (
-                      <button
-                        key={result.place_id}
-                        onClick={() => handleSearchResultSelect(result)}
-                        className="w-full text-left p-3 rounded-lg hover:bg-gray-100 text-sm transition-colors border"
-                      >
-                        <div className="flex items-start gap-2">
-                          <MapPin className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium truncate">{mainName}</p>
-                            {subName && <p className="text-xs text-gray-500 truncate">{subName}</p>}
-                          </div>
+
+            {/* Content - Enhanced Scrolling */}
+            <div className="flex-1 overflow-y-auto p-4 scrollbar-thin">
+              {isLoadingFavorites ? (
+                <Loading text="Loading locations..." />
+              ) : (
+                <>
+                  {activeTab === "search" && (
+                    <div className="space-y-2">
+                      {searchResults.map((result) => {
+                        const nameParts = result.display_name.split(",")
+                        const mainName = nameParts[0]
+                        const subName = nameParts.slice(1, 3).join(",").trim()
+                        return (
+                          <button
+                            key={result.place_id}
+                            onClick={() => handleSearchResultSelect(result)}
+                            className="w-full text-left p-3 rounded-lg hover:bg-gray-100 text-sm transition-colors border btn-touch"
+                          >
+                            <div className="flex items-start gap-2">
+                              <MapPin className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium truncate">{mainName}</p>
+                                {subName && <p className="text-xs text-gray-500 truncate">{subName}</p>}
+                              </div>
+                            </div>
+                          </button>
+                        )
+                      })}
+                      
+                      {searchTerm.length >= 2 && searchResults.length === 0 && !isSearching && (
+                        <div className="text-center py-8 text-gray-500">
+                          <Search className="h-8 w-8 mx-auto mb-2 text-gray-300" />
+                          <p className="text-sm">No results found for "{searchTerm}"</p>
+                          <p className="text-xs mt-1">Try different keywords</p>
                         </div>
-                      </button>
-                    )
-                  })}
-                  {searchTerm.length >= 2 && searchResults.length === 0 && !isSearching && (
-                    <div className="text-center py-8 text-gray-500">
-                      <Search className="h-8 w-8 mx-auto mb-2 text-gray-300" />
-                      <p className="text-sm">No results found for &quot;{searchTerm}&quot;</p>
-                      <p className="text-xs mt-1">Try different keywords or use landmarks</p>
+                      )}
+                      
+                      {searchTerm.length < 2 && (
+                        <div className="text-center py-8 text-gray-400">
+                          <Search className="h-8 w-8 mx-auto mb-2" />
+                          <p className="text-sm">Type to search locations</p>
+                          <p className="text-xs mt-1">Results appear as you type</p>
+                        </div>
+                      )}
                     </div>
                   )}
-                  {searchTerm.length < 2 && (
-                    <div className="text-center py-8 text-gray-400">
-                      <Search className="h-8 w-8 mx-auto mb-2" />
-                      <p className="text-sm">Type to search locations</p>
-                      <p className="text-xs mt-1">Results appear as you type</p>
+
+                  {(activeTab === "favorites" || activeTab === "popular") && (
+                    <div className="space-y-2">
+                      {filteredLocations.map((location) => {
+                        const isUserFavorite = !location.id.startsWith('default-')
+                        return (
+                          <div key={location.id} className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleLocationSelect({
+                                name: location.name,
+                                lat: location.lat,
+                                lng: location.lng
+                              })}
+                              className="flex-1 text-left p-3 rounded-lg hover:bg-gray-100 text-sm transition-colors border btn-touch"
+                            >
+                              <div className="flex items-center gap-2">
+                                {isUserFavorite ? (
+                                  <Heart className="h-4 w-4 text-red-500 flex-shrink-0" />
+                                ) : (
+                                  <MapPin className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <span className="font-medium truncate block">{location.name}</span>
+                                  <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
+                                    <Clock className="h-3 w-3" />
+                                    <span>Used {location.usage_count} times</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </button>
+                            
+                            {isUserFavorite && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleRemoveFromFavorites(location.id)}
+                                className="text-red-500 hover:text-red-700 btn-touch"
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        )
+                      })}
+                      
+                      {filteredLocations.length === 0 && (
+                        <div className="text-center py-8 text-gray-500">
+                          <Heart className="h-8 w-8 mx-auto mb-2 text-gray-300" />
+                          <p className="text-sm">No saved locations yet</p>
+                          <p className="text-xs mt-1">Search and save your favorite places</p>
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
+                </>
               )}
             </div>
-            {/* Selected Location */}
+
+            {/* Selected Location - Enhanced Mobile */}
             {selectedLocation && (
               <div className="p-4 border-t bg-gray-50">
                 <h4 className="font-medium mb-2">Selected Location</h4>
@@ -366,26 +546,28 @@ export default function LocationPicker({ onLocationSelect, onClose, title = "Sel
                   Lat: {selectedLocation.lat.toFixed(6)}, Lng: {selectedLocation.lng.toFixed(6)}
                 </div>
                 <div className="flex gap-2">
-                  <Button onClick={handleConfirm} className="flex-1">
+                  <Button onClick={handleConfirm} className="flex-1 btn-touch">
                     Confirm Selection
                   </Button>
-                  <Button variant="outline" onClick={() => setSelectedLocation(null)}>
+                  <Button variant="outline" onClick={() => setSelectedLocation(null)} className="btn-touch">
                     Clear
                   </Button>
                 </div>
               </div>
             )}
           </div>
-          {/* Map */}
-          <div className="flex-1">
+
+          {/* Map - Hidden on mobile by default, can be toggled */}
+          <div className="hidden md:block flex-1">
             <div ref={mapRef} className="w-full h-full" />
           </div>
         </div>
-        {/* Instructions */}
+
+        {/* Instructions - Mobile Optimized */}
         <div className="p-4 border-t bg-gray-50 text-sm text-gray-600">
           <p>
-            <strong>How to use:</strong> Type to search locations in real-time, select from quick landmarks, or click
-            directly on the map.
+            <strong>How to use:</strong> Search locations, select from favorites, or use popular destinations.
+            <span className="hidden md:inline"> Click on the map to set custom locations.</span>
           </p>
         </div>
       </div>

@@ -10,11 +10,48 @@ import { useToast } from "@/hooks/use-toast"
 // Global tracking intervals
 const trackingIntervals = new Map<string, NodeJS.Timeout>()
 
+// Realistic speed calculation based on route type and conditions
+const getRealisticSpeed = (distance: number): number => {
+  let baseSpeed
+  
+  // Determine speed based on distance (route type)
+  if (distance < 50) {
+    // City routes: 25-40 km/h (traffic, stops)
+    baseSpeed = Math.floor(Math.random() * (40 - 25 + 1)) + 25
+  } else if (distance < 150) {
+    // Inter-city routes: 45-65 km/h (mixed roads)
+    baseSpeed = Math.floor(Math.random() * (65 - 45 + 1)) + 45
+  } else {
+    // Long distance routes: 60-80 km/h (highways with stops)
+    baseSpeed = Math.floor(Math.random() * (80 - 60 + 1)) + 60
+  }
+  
+  // Add random variation for traffic conditions (-10 to +5 km/h)
+  const variation = Math.floor(Math.random() * 16) - 10
+  return Math.max(20, Math.min(85, baseSpeed + variation)) // Keep within reasonable bounds
+}
+
+// Calculate distance between two coordinates
+const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+  const R = 6371 // Earth's radius in kilometers
+  const dLat = toRadians(lat2 - lat1)
+  const dLng = toRadians(lng2 - lng1)
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2)
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c
+}
+
+const toRadians = (degrees: number): number => degrees * (Math.PI / 180)
+
 export function GlobalTracker() {
   const { toast } = useToast()
   const isInitialized = useRef(false)
 
-  // Start tracking for a specific trip
+  // Start tracking for a specific trip with realistic timing
   const startTracking = useCallback(
     (trip: Trip) => {
       const buses = realtimeStore.getBuses()
@@ -28,8 +65,41 @@ export function GlobalTracker() {
         clearInterval(existingInterval)
       }
 
-      // Generate random speed between 100-120 km/h for this trip
-      const randomSpeed = Math.floor(Math.random() * (120 - 100 + 1)) + 100
+      // Calculate total distance for realistic speed
+      let totalDistance = 0
+      if (trip.route && trip.route.length > 1) {
+        for (let i = 0; i < trip.route.length - 1; i++) {
+          const point1 = trip.route[i]
+          const point2 = trip.route[i + 1]
+          totalDistance += calculateDistance(point1.lat, point1.lng, point2.lat, point2.lng)
+        }
+      } else {
+        // Fallback: calculate direct distance
+        totalDistance = calculateDistance(
+          trip.departure.lat,
+          trip.departure.lng,
+          trip.destination.lat,
+          trip.destination.lng,
+        )
+      }
+
+      // Get realistic speed based on distance and route type
+      const realisticSpeed = getRealisticSpeed(totalDistance)
+      
+      // Calculate realistic completion time in minutes
+      const estimatedTripTimeMinutes = (totalDistance / realisticSpeed) * 60
+      
+      // Calculate progress per update (every 30 seconds for smoother movement)
+      const updateIntervalSeconds = 30
+      const totalUpdates = Math.ceil(estimatedTripTimeMinutes * 60 / updateIntervalSeconds)
+      const progressPerUpdate = 100 / totalUpdates
+
+      console.log(
+        `📊 ${tripName}: Distance: ${totalDistance.toFixed(1)}km, Speed: ${realisticSpeed}km/h, Est. time: ${estimatedTripTimeMinutes.toFixed(0)}min`
+      )
+
+      const startTime = Date.now()
+      let currentSpeed = realisticSpeed
 
       const interval = setInterval(async () => {
         try {
@@ -41,8 +111,16 @@ export function GlobalTracker() {
             return
           }
 
-          // Calculate new progress (0.5% per second = 200 seconds total)
-          const newProgress = Math.min(100, currentTrip.progress + 0.5)
+          // Calculate elapsed time in minutes
+          const elapsedTimeMs = Date.now() - startTime
+          const elapsedTimeMinutes = elapsedTimeMs / (1000 * 60)
+
+          // Vary speed slightly for realism (+/- 5 km/h)
+          const speedVariation = (Math.random() - 0.5) * 10
+          currentSpeed = Math.max(15, Math.min(90, realisticSpeed + speedVariation))
+
+          // Calculate new progress based on realistic timing
+          const newProgress = Math.min(100, currentTrip.progress + progressPerUpdate)
 
           // Calculate current position based on route
           let currentLat = currentTrip.current_lat
@@ -54,12 +132,12 @@ export function GlobalTracker() {
             currentLng = currentPosition.lng
           }
 
-          // Update trip progress with random speed
+          // Update trip progress with realistic speed
           const updates: Partial<Trip> = {
             progress: newProgress,
             current_lat: currentLat,
             current_lng: currentLng,
-            speed: randomSpeed, // Use the random speed generated for this trip
+            speed: Math.round(currentSpeed),
           }
 
           // If completed, mark as completed
@@ -84,7 +162,7 @@ export function GlobalTracker() {
               lat: currentLat,
               lng: currentLng,
               progress: newProgress,
-              elapsed_time_minutes: 0, // Add this field
+              elapsed_time_minutes: elapsedTimeMinutes,
               timestamp: Date.now(),
             })
           }
@@ -94,18 +172,18 @@ export function GlobalTracker() {
             await updateBusStatus(trip.bus_id, false)
             setTimeout(async () => {
               await deleteBusLocation(trip.bus_id)
-            }, 5000)
+            }, 10000) // Remove after 10 seconds
             stopTracking(trip.id)
           }
 
-          console.log(`📊 ${tripName}: ${newProgress.toFixed(1)}% - ${randomSpeed} km/h`)
+          console.log(`📊 ${tripName}: ${newProgress.toFixed(1)}% - ${currentSpeed.toFixed(0)}km/h`)
         } catch (trackingError) {
           console.error("❌ Error in global tracking:", trackingError)
         }
-      }, 1000) // Update every 1 second
+      }, updateIntervalSeconds * 1000) // Update every 30 seconds for realistic movement
 
       trackingIntervals.set(trip.id, interval)
-      console.log(`✅ Global tracking started for: ${tripName} at ${randomSpeed} km/h`)
+      console.log(`✅ Global tracking started for: ${tripName} at realistic speed`)
     },
     [toast],
   )
@@ -124,7 +202,7 @@ export function GlobalTracker() {
   useEffect(() => {
     if (isInitialized.current) return
     isInitialized.current = true
-    console.log("🔄 Initializing Global Tracker...")
+    console.log("🔄 Initializing Global Tracker with realistic timing...")
 
     // Start tracking for existing in-progress trips
     const checkAndStartTracking = () => {
@@ -139,7 +217,7 @@ export function GlobalTracker() {
       if (inProgressTrips.length > 0) {
         toast({
           title: "🚌 Tracking Active",
-          description: `Monitoring ${inProgressTrips.length} active trips`,
+          description: `Monitoring ${inProgressTrips.length} trips with realistic timing`,
           variant: "default",
         })
       }
@@ -177,6 +255,7 @@ export function GlobalTracker() {
       console.log("🧹 Cleaning up Global Tracker")
       trackingIntervals.forEach((interval) => clearInterval(interval))
       trackingIntervals.clear()
+      isInitialized.current = false
       unsubscribe()
     }
   }, [startTracking, stopTracking, toast])
@@ -197,6 +276,29 @@ export const startTripTracking = (trip: Trip) => {
     clearInterval(existingInterval)
   }
 
+  // Calculate realistic timing based on distance
+  let totalDistance = 0
+  if (trip.route && trip.route.length > 1) {
+    for (let i = 0; i < trip.route.length - 1; i++) {
+      const point1 = trip.route[i]
+      const point2 = trip.route[i + 1]
+      totalDistance += calculateDistance(point1.lat, point1.lng, point2.lat, point2.lng)
+    }
+  } else {
+    totalDistance = calculateDistance(
+      trip.departure.lat,
+      trip.departure.lng,
+      trip.destination.lat,
+      trip.destination.lng,
+    )
+  }
+
+  const realisticSpeed = getRealisticSpeed(totalDistance)
+  const estimatedTripTimeMinutes = (totalDistance / realisticSpeed) * 60
+  const updateIntervalSeconds = 30
+  const totalUpdates = Math.ceil(estimatedTripTimeMinutes * 60 / updateIntervalSeconds)
+  const progressPerUpdate = 100 / totalUpdates
+
   const interval = setInterval(async () => {
     try {
       const { data: currentTrip, error } = await supabase.from("trips").select("*").eq("id", trip.id).single()
@@ -206,7 +308,7 @@ export const startTripTracking = (trip: Trip) => {
         return
       }
 
-      const newProgress = Math.min(100, currentTrip.progress + 0.5)
+      const newProgress = Math.min(100, currentTrip.progress + progressPerUpdate)
       let currentLat = currentTrip.current_lat
       let currentLng = currentTrip.current_lng
 
@@ -221,6 +323,7 @@ export const startTripTracking = (trip: Trip) => {
         progress: newProgress,
         current_lat: currentLat,
         current_lng: currentLng,
+        speed: Math.round(realisticSpeed),
       }
 
       if (newProgress >= 100) {
@@ -237,7 +340,7 @@ export const startTripTracking = (trip: Trip) => {
           lat: currentLat,
           lng: currentLng,
           progress: newProgress,
-          elapsed_time_minutes: 0, // Add this field
+          elapsed_time_minutes: (Date.now() - Date.now()) / (1000 * 60),
           timestamp: Date.now(),
         })
       }
@@ -246,7 +349,7 @@ export const startTripTracking = (trip: Trip) => {
         await updateBusStatus(trip.bus_id, false)
         setTimeout(async () => {
           await deleteBusLocation(trip.bus_id)
-        }, 5000)
+        }, 10000)
         stopTripTracking(trip.id)
       }
 
@@ -254,7 +357,7 @@ export const startTripTracking = (trip: Trip) => {
     } catch (manualError) {
       console.error("❌ Error in manual tracking:", manualError)
     }
-  }, 1000)
+  }, updateIntervalSeconds * 1000)
 
   trackingIntervals.set(trip.id, interval)
   console.log("✅ Manual tracking started for:", tripName)

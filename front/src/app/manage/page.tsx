@@ -2,11 +2,12 @@
 
 import type React from "react"
 import dynamic from 'next/dynamic';
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { supabase, uploadBusPhoto, deleteBusPhoto } from "@/lib/supabase"
 import { getBuses, getTrips, createBus, updateBusPhoto, deleteBus as deleteBusFromDB, createTrip } from "@/lib/database"
 import { calculateRoute } from "@/lib/routing"
 import { backendApi } from "@/lib/backend-api"
+import { getFavoriteLocations, getMostUsedLocations } from "@/lib/favorite-locations"
 import type { Bus, Trip, CreateBusRequest, CreateTripRequest, Stop } from "@/types"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,10 +15,17 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Loading } from "@/components/ui/loading"
 import { useToast } from "@/hooks/use-toast"
-import { ArrowLeft, Plus, BusIcon, Navigation, Trash2, Play, Upload, MapPin, Clock, Square, AlertCircle, CheckCircle, XCircle, RefreshCw, Server, Wifi, WifiOff } from 'lucide-react'
+import { ArrowLeft, Plus, BusIcon, Navigation, Trash2, Play, Upload, MapPin, Clock, Square, AlertCircle, CheckCircle, XCircle, RefreshCw, Server, Wifi, WifiOff, Heart } from 'lucide-react'
 import Link from "next/link"
 import Image from "next/image"
-import LocationPicker from "@/components/map/LocationPicker"
+
+const LocationPicker = dynamic(
+  () => import('@/components/map/LocationPicker'),
+  { 
+    ssr: false,
+    loading: () => <Loading text="Loading location picker..." />
+  }
+);
 
 export default function ManagePage() {
   const [buses, setBuses] = useState<Bus[]>([])
@@ -25,6 +33,7 @@ export default function ManagePage() {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<"buses" | "trips">("buses")
   const [backendStatus, setBackendStatus] = useState<"connected" | "disconnected" | "checking">("checking")
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const { toast } = useToast()
 
   // Bus form state
@@ -44,69 +53,88 @@ export default function ManagePage() {
     stops: [],
     destination: { name: "", lat: 0, lng: 0 },
   })
-  const LocationPicker = dynamic(
-    () => import('@/components/map/LocationPicker'),
-    { 
-      ssr: false,
-      loading: () => <p>Loading map...</p>
-    }
-  );
-  
   const [tripLoading, setTripLoading] = useState(false)
   const [showLocationPicker, setShowLocationPicker] = useState<{
     type: "departure" | "destination" | "stop"
     index?: number
   } | null>(null)
 
-  // Load initial data and check backend status
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        console.log("Loading admin data...")
-        const [busesData, tripsData] = await Promise.all([getBuses(), getTrips()])
-        setBuses(busesData)
-        setTrips(tripsData)
-        // Check backend status
-        const health = await backendApi.healthCheck()
-        setBackendStatus(health ? "connected" : "disconnected")
+  // Load data with enhanced error handling and auto-refresh
+  const loadData = useCallback(async (showLoadingToast = false) => {
+    try {
+      if (showLoadingToast) {
+        setIsRefreshing(true)
+      }
+      
+      console.log("Loading admin data...")
+      
+      // Load data with timeout
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), 10000)
+      )
+      
+      const [busesData, tripsData] = await Promise.race([
+        Promise.all([getBuses(), getTrips()]),
+        timeoutPromise
+      ]) as [Bus[], Trip[]]
+      
+      setBuses(busesData)
+      setTrips(tripsData)
+      
+      // Check backend status
+      const health = await backendApi.healthCheck()
+      setBackendStatus(health ? "connected" : "disconnected")
+      
+      if (showLoadingToast) {
         toast({
-          title: "✅ Admin System Ready",
+          title: "✅ Data Refreshed",
           description: `Loaded ${busesData.length} buses and ${tripsData.length} trips`,
           variant: "success",
         })
-      } catch (loadError) {
-        console.error("Error loading data:", loadError)
-        setBackendStatus("disconnected")
-        toast({
-          title: "❌ Loading Error",
-          description: "Failed to load data. Please refresh the page.",
-          variant: "destructive",
-        })
-      } finally {
-        setLoading(false)
       }
+    } catch (loadError) {
+      console.error("Error loading data:", loadError)
+      setBackendStatus("disconnected")
+      toast({
+        title: "❌ Loading Error",
+        description: "Failed to load data. Please check your connection.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+      setIsRefreshing(false)
     }
-    loadData()
   }, [toast])
+
+  // Initial load
+  useEffect(() => {
+    loadData()
+  }, [loadData])
 
   // Set up real-time subscriptions with auto-refresh
   useEffect(() => {
     console.log("Setting up real-time subscriptions...")
+    
+    // Enhanced real-time subscriptions with better error handling
     const busesSubscription = supabase
       .channel("manage_buses")
       .on("postgres_changes", { event: "*", schema: "public", table: "buses" }, (payload) => {
         console.log("Bus change:", payload)
+        
+        // Update local state immediately for better UX
         if (payload.eventType === "INSERT") {
-          setBuses((prev) => [payload.new as Bus, ...prev])
+          const newBus = payload.new as Bus
+          setBuses((prev) => [newBus, ...prev])
           toast({
             title: "🚌 New Bus Added",
-            description: `${(payload.new as Bus).nickname} has been added to the fleet`,
+            description: `${newBus.nickname} has been added to the fleet`,
             variant: "success",
           })
         } else if (payload.eventType === "UPDATE") {
-          setBuses((prev) => prev.map((bus) => (bus.id === payload.new.id ? (payload.new as Bus) : bus)))
           const updatedBus = payload.new as Bus
-          if (payload.old.is_active !== updatedBus.is_active) {
+          setBuses((prev) => prev.map((bus) => (bus.id === updatedBus.id ? updatedBus : bus)))
+          
+          if (payload.old?.is_active !== updatedBus.is_active) {
             toast({
               title: updatedBus.is_active ? "🚀 Bus Departed" : "🏠 Bus Returned",
               description: `${updatedBus.nickname} is now ${updatedBus.is_active ? "on trip" : "in garage"}`,
@@ -122,22 +150,28 @@ export default function ManagePage() {
           })
         }
       })
-      .subscribe()
+      .subscribe((status) => {
+        console.log("Buses subscription status:", status)
+      })
 
     const tripsSubscription = supabase
       .channel("manage_trips")
       .on("postgres_changes", { event: "*", schema: "public", table: "trips" }, (payload) => {
         console.log("Trip change:", payload)
+        
+        // Update local state immediately
         if (payload.eventType === "INSERT") {
-          setTrips((prev) => [payload.new as Trip, ...prev])
+          const newTrip = payload.new as Trip
+          setTrips((prev) => [newTrip, ...prev])
           toast({
             title: "🗺️ New Trip Created",
             description: "Trip has been added and is ready to start",
             variant: "success",
           })
         } else if (payload.eventType === "UPDATE") {
-          setTrips((prev) => prev.map((trip) => (trip.id === payload.new.id ? (payload.new as Trip) : trip)))
           const updatedTrip = payload.new as Trip
+          setTrips((prev) => prev.map((trip) => (trip.id === updatedTrip.id ? updatedTrip : trip)))
+          
           const oldTrip = payload.old as Trip
           if (oldTrip.status !== updatedTrip.status) {
             const statusMessages = {
@@ -145,10 +179,11 @@ export default function ManagePage() {
               COMPLETED: "✅ Trip Completed",
               CANCELLED: "❌ Trip Cancelled",
             }
-            if (statusMessages[updatedTrip.status as keyof typeof statusMessages]) {
+            const message = statusMessages[updatedTrip.status as keyof typeof statusMessages]
+            if (message) {
               toast({
-                title: statusMessages[updatedTrip.status as keyof typeof statusMessages],
-                description: `Trip progress: ${updatedTrip.progress.toFixed(1)}%`,
+                title: message,
+                description: `Progress: ${updatedTrip.progress.toFixed(1)}%`,
                 variant: updatedTrip.status === "COMPLETED" ? "success" : "default",
               })
             }
@@ -162,14 +197,17 @@ export default function ManagePage() {
           })
         }
       })
-      .subscribe()
+      .subscribe((status) => {
+        console.log("Trips subscription status:", status)
+      })
 
-    // Auto-refresh data every 30 seconds
+    // Auto-refresh every 30 seconds as backup
     const refreshInterval = setInterval(async () => {
       try {
         const [busesData, tripsData] = await Promise.all([getBuses(), getTrips()])
         setBuses(busesData)
         setTrips(tripsData)
+        
         // Check backend status
         const health = await backendApi.healthCheck()
         setBackendStatus(health ? "connected" : "disconnected")
@@ -187,9 +225,29 @@ export default function ManagePage() {
     }
   }, [toast])
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
+      // Validate file size (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        toast({
+          title: "❌ File Too Large",
+          description: "Please select an image smaller than 5MB",
+          variant: "destructive",
+        })
+        return
+      }
+      
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        toast({
+          title: "❌ Invalid File Type",
+          description: "Please select an image file",
+          variant: "destructive",
+        })
+        return
+      }
+      
       setBusPhoto(file)
       const reader = new FileReader()
       reader.onload = (e) => {
@@ -197,26 +255,44 @@ export default function ManagePage() {
       }
       reader.readAsDataURL(file)
     }
-  }
+  }, [toast])
 
-  const handleCreateBus = async (e: React.FormEvent) => {
+  const handleCreateBus = useCallback(async (e: React.FormEvent) => {
     e.preventDefault()
     setBusLoading(true)
     try {
+      // Validate form
+      if (!busForm.code.trim() || !busForm.nickname.trim() || !busForm.crew.trim()) {
+        throw new Error("All fields are required")
+      }
+      
       // Create bus first
       const newBus = await createBus(busForm)
+      
       // Upload photo if provided
       if (busPhoto) {
-        const photoUrl = await uploadBusPhoto(busPhoto, newBus.id)
-        await updateBusPhoto(newBus.id, photoUrl)
+        try {
+          const photoUrl = await uploadBusPhoto(busPhoto, newBus.id)
+          await updateBusPhoto(newBus.id, photoUrl)
+        } catch (photoError) {
+          console.error("Photo upload failed:", photoError)
+          toast({
+            title: "⚠️ Bus Created, Photo Failed",
+            description: "Bus was created but photo couldn't be uploaded",
+            variant: "default",
+          })
+        }
       }
+      
       // Reset form
       setBusForm({ code: "", nickname: "", crew: "" })
       setBusPhoto(null)
       setBusPhotoPreview(null)
+      
       // Clear file input
       const fileInput = document.getElementById("photo") as HTMLInputElement
       if (fileInput) fileInput.value = ""
+      
       toast({
         title: "✅ Bus Created Successfully",
         description: `${newBus.nickname} has been added to the fleet`,
@@ -226,22 +302,34 @@ export default function ManagePage() {
       console.error("Failed to create bus:", busError)
       toast({
         title: "❌ Failed to Create Bus",
-        description: "Please check your input and try again",
+        description: busError instanceof Error ? busError.message : "Please check your input and try again",
         variant: "destructive",
       })
     } finally {
       setBusLoading(false)
     }
-  }
+  }, [busForm, busPhoto, toast])
 
-  const handleCreateTrip = async (e: React.FormEvent) => {
+  const handleCreateTrip = useCallback(async (e: React.FormEvent) => {
     e.preventDefault()
     setTripLoading(true)
     try {
-      // Calculate route using OSRM
-      const routeData = await calculateRoute(tripForm.departure, tripForm.stops, tripForm.destination)
+      // Validate form
+      if (!tripForm.bus_id || !tripForm.departure.name || !tripForm.destination.name) {
+        throw new Error("Please select bus, departure, and destination")
+      }
+      
+      // Calculate route using OSRM with timeout
+      const routePromise = calculateRoute(tripForm.departure, tripForm.stops, tripForm.destination)
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Route calculation timeout')), 15000)
+      )
+      
+      const routeData = await Promise.race([routePromise, timeoutPromise]) as any
+      
       // Create trip with route data
       const newTrip = await createTrip(tripForm)
+      
       // Update trip with route data
       await supabase
         .from("trips")
@@ -251,6 +339,7 @@ export default function ManagePage() {
           estimated_duration: routeData.duration,
         })
         .eq("id", newTrip.id)
+      
       // Reset form
       setTripForm({
         bus_id: "",
@@ -258,24 +347,25 @@ export default function ManagePage() {
         stops: [],
         destination: { name: "", lat: 0, lng: 0 },
       })
+      
       toast({
         title: "✅ Trip Created Successfully",
-        description: `Route from ${tripForm.departure.name} to ${tripForm.destination.name}`,
+        description: `Route: ${tripForm.departure.name} → ${tripForm.destination.name}`,
         variant: "success",
       })
     } catch (tripError) {
       console.error("Failed to create trip:", tripError)
       toast({
         title: "❌ Failed to Create Trip",
-        description: "Please check your route and try again",
+        description: tripError instanceof Error ? tripError.message : "Please check your route and try again",
         variant: "destructive",
       })
     } finally {
       setTripLoading(false)
     }
-  }
+  }, [tripForm, toast])
 
-  const handleStartTrip = async (trip: Trip) => {
+  const handleStartTrip = useCallback(async (trip: Trip) => {
     try {
       if (backendStatus !== "connected") {
         toast({
@@ -285,11 +375,12 @@ export default function ManagePage() {
         })
         return
       }
+      
       // Use backend API to start trip
       await backendApi.startTrip(trip.id)
       toast({
         title: "🚀 Trip Started",
-        description: "Bus is now being tracked by backend server at 80-120 km/h",
+        description: "Bus is now being tracked with realistic timing",
         variant: "success",
       })
     } catch (startError) {
@@ -300,9 +391,9 @@ export default function ManagePage() {
         variant: "destructive",
       })
     }
-  }
+  }, [backendStatus, toast])
 
-  const handleCancelTrip = async (trip: Trip) => {
+  const handleCancelTrip = useCallback(async (trip: Trip) => {
     if (!confirm("Are you sure you want to cancel this trip?")) return
     try {
       if (backendStatus !== "connected") {
@@ -313,6 +404,7 @@ export default function ManagePage() {
         })
         return
       }
+      
       // Use backend API to cancel trip
       await backendApi.cancelTrip(trip.id)
       toast({
@@ -328,9 +420,9 @@ export default function ManagePage() {
         variant: "destructive",
       })
     }
-  }
+  }, [backendStatus, toast])
 
-  const handleDeleteBus = async (bus: Bus) => {
+  const handleDeleteBus = useCallback(async (bus: Bus) => {
     if (!confirm("Are you sure you want to delete this bus?")) return
     try {
       // Delete photo from storage
@@ -350,9 +442,9 @@ export default function ManagePage() {
         variant: "destructive",
       })
     }
-  }
+  }, [toast])
 
-  const handleDeleteTrip = async (trip: Trip) => {
+  const handleDeleteTrip = useCallback(async (trip: Trip) => {
     if (!confirm("Are you sure you want to delete this trip from history?")) return
     try {
       const { error: deleteError } = await supabase.from("trips").delete().eq("id", trip.id)
@@ -370,10 +462,11 @@ export default function ManagePage() {
         variant: "destructive",
       })
     }
-  }
+  }, [toast])
 
-  const handleLocationSelect = (location: { name: string; lat: number; lng: number }) => {
+  const handleLocationSelect = useCallback((location: { name: string; lat: number; lng: number }) => {
     if (!showLocationPicker) return
+    
     if (showLocationPicker.type === "departure") {
       setTripForm((prev) => ({ ...prev, departure: location }))
     } else if (showLocationPicker.type === "destination") {
@@ -383,45 +476,27 @@ export default function ManagePage() {
       setTripForm((prev) => ({ ...prev, stops: [...prev.stops, newStop] }))
     }
     setShowLocationPicker(null)
-  }
+  }, [showLocationPicker])
 
-  const removeStop = (index: number) => {
+  const removeStop = useCallback((index: number) => {
     setTripForm((prev) => ({
       ...prev,
       stops: prev.stops.filter((_, i) => i !== index),
     }))
-  }
+  }, [])
 
-  const updateStopDuration = (index: number, duration: number) => {
+  const updateStopDuration = useCallback((index: number, duration: number) => {
     setTripForm((prev) => ({
       ...prev,
       stops: prev.stops.map((stop, i) => (i === index ? { ...stop, duration } : stop)),
     }))
-  }
+  }, [])
 
-  const handleRefresh = async () => {
-    try {
-      const [busesData, tripsData] = await Promise.all([getBuses(), getTrips()])
-      setBuses(busesData)
-      setTrips(tripsData)
-      // Check backend status
-      const health = await backendApi.healthCheck()
-      setBackendStatus(health ? "connected" : "disconnected")
-      toast({
-        title: "🔄 Refreshed",
-        description: "Admin data updated successfully",
-        variant: "success",
-      })
-    } catch (refreshError) {
-      console.error("Refresh failed:", refreshError)
-      toast({
-        title: "❌ Refresh Failed",
-        description: "Could not update data",
-        variant: "destructive",
-      })
-    }
-  }
+  const handleRefresh = useCallback(async () => {
+    await loadData(true)
+  }, [loadData])
 
+  // Calculate stats
   const availableBuses = buses.filter((bus) => !bus.is_active)
   const activeTrips = trips.filter((trip) => trip.status === "IN_PROGRESS")
   const completedTrips = trips.filter((trip) => trip.status === "COMPLETED")
@@ -429,121 +504,147 @@ export default function ManagePage() {
 
   if (loading) {
     return (
-      <div className="h-screen flex items-center justify-center">
-        <Loading text="Loading admin panel..." size="lg" />
+      <div className="h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-fadeIn">
+          <Loading text="Loading admin panel..." size="lg" />
+        </div>
       </div>
     )
   }
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/">
-              <Button variant="outline" size="sm">
+      {/* Header - Enhanced Mobile */}
+      <header className="bg-white shadow-sm border-b p-responsive safe-area-inset-top z-10 no-select">
+        <div className="flex items-center justify-between gap-responsive">
+          <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
+            <Link href="/" className="flex-shrink-0">
+              <Button variant="outline" size="sm" className="btn-touch">
                 <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to Map
+                <span className="hidden sm:inline">Back to Map</span>
+                <span className="sm:hidden">Back</span>
               </Button>
             </Link>
-            <h1 className="text-xl font-bold text-gray-900">Bus Management</h1>
-            <div className="flex items-center gap-2 text-sm">
-              {backendStatus === "connected" ? (
-                <div className="flex items-center gap-2 text-green-600">
-                  <Server className="h-4 w-4" />
-                  <Wifi className="h-3 w-3" />
-                  Backend Connected
-                </div>
-              ) : backendStatus === "disconnected" ? (
-                <div className="flex items-center gap-2 text-red-600">
-                  <Server className="h-4 w-4" />
-                  <WifiOff className="h-3 w-3" />
-                  Backend Offline
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-yellow-600">
-                  <Server className="h-4 w-4" />
-                  <Loading size="sm" />
-                  Checking...
-                </div>
-              )}
+            <div className="min-w-0 flex-1">
+              <h1 className="text-lg md:text-xl font-bold text-gray-900 truncate">Bus Management</h1>
+              <div className="flex items-center gap-2 text-xs md:text-sm">
+                {backendStatus === "connected" ? (
+                  <div className="flex items-center gap-1 md:gap-2 text-green-600">
+                    <Server className="h-3 w-3 md:h-4 md:w-4" />
+                    <Wifi className="h-2 w-2 md:h-3 md:w-3" />
+                    <span className="hidden sm:inline">Backend Connected</span>
+                    <span className="sm:hidden">Connected</span>
+                  </div>
+                ) : backendStatus === "disconnected" ? (
+                  <div className="flex items-center gap-1 md:gap-2 text-red-600">
+                    <Server className="h-3 w-3 md:h-4 md:w-4" />
+                    <WifiOff className="h-2 w-2 md:h-3 md:w-3" />
+                    <span className="hidden sm:inline">Backend Offline</span>
+                    <span className="sm:hidden">Offline</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 md:gap-2 text-yellow-600">
+                    <Server className="h-3 w-3 md:h-4 md:w-4" />
+                    <Loading size="sm" />
+                    <span className="hidden sm:inline">Checking...</span>
+                    <span className="sm:hidden">...</span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={handleRefresh}>
-              <RefreshCw className="h-4 w-4" />
+
+          <div className="flex gap-1 md:gap-2 flex-shrink-0">
+            <Button 
+              size="sm" 
+              variant="outline" 
+              onClick={handleRefresh} 
+              disabled={isRefreshing}
+              className="btn-touch"
+            >
+              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
             </Button>
-            <Button variant={activeTab === "buses" ? "default" : "outline"} onClick={() => setActiveTab("buses")}>
-              <BusIcon className="h-4 w-4 mr-2" />
-              Buses ({buses.length})
+            <Button 
+              variant={activeTab === "buses" ? "default" : "outline"} 
+              onClick={() => setActiveTab("buses")}
+              size="sm"
+              className="btn-touch"
+            >
+              <BusIcon className="h-4 w-4 mr-1 md:mr-2" />
+              <span className="hidden sm:inline">Buses ({buses.length})</span>
+              <span className="sm:hidden">{buses.length}</span>
             </Button>
-            <Button variant={activeTab === "trips" ? "default" : "outline"} onClick={() => setActiveTab("trips")}>
-              <Navigation className="h-4 w-4 mr-2" />
-              Trips ({trips.length})
+            <Button 
+              variant={activeTab === "trips" ? "default" : "outline"} 
+              onClick={() => setActiveTab("trips")}
+              size="sm"
+              className="btn-touch"
+            >
+              <Navigation className="h-4 w-4 mr-1 md:mr-2" />
+              <span className="hidden sm:inline">Trips ({trips.length})</span>
+              <span className="sm:hidden">{trips.length}</span>
             </Button>
           </div>
         </div>
       </header>
 
-      <div className="p-6">
+      <div className="p-responsive safe-area-inset-bottom">
         {/* Backend Status Alert */}
         {backendStatus === "disconnected" && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg animate-fadeIn">
             <div className="flex items-center gap-2 text-red-800">
-              <AlertCircle className="h-5 w-5" />
+              <AlertCircle className="h-5 w-5 flex-shrink-0" />
               <strong>Backend Server Offline</strong>
             </div>
             <p className="text-red-700 mt-1 text-sm">
-              Real-time tracking is disabled. Please start the backend server with:{" "}
-              <code className="bg-red-100 px-1 rounded">npm run dev</code> in the server directory.
+              Real-time tracking is disabled. Please start the backend server to enable trip management.
             </p>
           </div>
         )}
 
-        {/* Status Overview */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <Card className="p-4 bg-blue-50 border-blue-200">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-100 rounded-lg">
-                <BusIcon className="h-5 w-5 text-blue-600" />
+        {/* Status Overview - Enhanced Mobile */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4 mb-6">
+          <Card className="p-3 md:p-4 bg-blue-50 border-blue-200">
+            <div className="flex items-center gap-2 md:gap-3">
+              <div className="p-1.5 md:p-2 bg-blue-100 rounded-lg flex-shrink-0">
+                <BusIcon className="h-4 w-4 md:h-5 md:w-5 text-blue-600" />
               </div>
-              <div>
-                <p className="text-sm text-blue-600">Active Buses</p>
-                <p className="text-2xl font-bold text-blue-700">{buses.filter((b) => b.is_active).length}</p>
-              </div>
-            </div>
-          </Card>
-          <Card className="p-4 bg-green-50 border-green-200">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-green-100 rounded-lg">
-                <CheckCircle className="h-5 w-5 text-green-600" />
-              </div>
-              <div>
-                <p className="text-sm text-green-600">Completed Trips</p>
-                <p className="text-2xl font-bold text-green-700">{completedTrips.length}</p>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs md:text-sm text-blue-600">Active Buses</p>
+                <p className="text-lg md:text-2xl font-bold text-blue-700">{buses.filter((b) => b.is_active).length}</p>
               </div>
             </div>
           </Card>
-          <Card className="p-4 bg-yellow-50 border-yellow-200">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-yellow-100 rounded-lg">
-                <Clock className="h-5 w-5 text-yellow-600" />
+          <Card className="p-3 md:p-4 bg-green-50 border-green-200">
+            <div className="flex items-center gap-2 md:gap-3">
+              <div className="p-1.5 md:p-2 bg-green-100 rounded-lg flex-shrink-0">
+                <CheckCircle className="h-4 w-4 md:h-5 md:w-5 text-green-600" />
               </div>
-              <div>
-                <p className="text-sm text-yellow-600">Pending Trips</p>
-                <p className="text-2xl font-bold text-yellow-700">{pendingTrips.length}</p>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs md:text-sm text-green-600">Completed</p>
+                <p className="text-lg md:text-2xl font-bold text-green-700">{completedTrips.length}</p>
               </div>
             </div>
           </Card>
-          <Card className="p-4 bg-purple-50 border-purple-200">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-purple-100 rounded-lg">
-                <Navigation className="h-5 w-5 text-purple-600" />
+          <Card className="p-3 md:p-4 bg-yellow-50 border-yellow-200">
+            <div className="flex items-center gap-2 md:gap-3">
+              <div className="p-1.5 md:p-2 bg-yellow-100 rounded-lg flex-shrink-0">
+                <Clock className="h-4 w-4 md:h-5 md:w-5 text-yellow-600" />
               </div>
-              <div>
-                <p className="text-sm text-purple-600">In Progress</p>
-                <p className="text-2xl font-bold text-purple-700">{activeTrips.length}</p>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs md:text-sm text-yellow-600">Pending</p>
+                <p className="text-lg md:text-2xl font-bold text-yellow-700">{pendingTrips.length}</p>
+              </div>
+            </div>
+          </Card>
+          <Card className="p-3 md:p-4 bg-purple-50 border-purple-200">
+            <div className="flex items-center gap-2 md:gap-3">
+              <div className="p-1.5 md:p-2 bg-purple-100 rounded-lg flex-shrink-0">
+                <Navigation className="h-4 w-4 md:h-5 md:w-5 text-purple-600" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs md:text-sm text-purple-600">In Progress</p>
+                <p className="text-lg md:text-2xl font-bold text-purple-700">{activeTrips.length}</p>
               </div>
             </div>
           </Card>
@@ -551,13 +652,13 @@ export default function ManagePage() {
 
         {activeTab === "buses" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Create Bus Form */}
+            {/* Create Bus Form - Enhanced Mobile */}
             <Card>
               <CardHeader>
-                <CardTitle>Add New Bus</CardTitle>
+                <CardTitle className="text-lg md:text-xl">Add New Bus</CardTitle>
               </CardHeader>
               <CardContent>
-                <form onSubmit={handleCreateBus} className="space-y-4">
+                <form onSubmit={handleCreateBus} className="space-y-4 form-mobile">
                   <div>
                     <Label htmlFor="code">Bus Code</Label>
                     <Input
@@ -589,14 +690,20 @@ export default function ManagePage() {
                     />
                   </div>
                   <div>
-                    <Label htmlFor="photo">Bus Photo</Label>
+                    <Label htmlFor="photo">Bus Photo (Optional)</Label>
                     <div className="mt-2">
-                      <input id="photo" type="file" accept="image/*" onChange={handlePhotoChange} className="hidden" />
+                      <input 
+                        id="photo" 
+                        type="file" 
+                        accept="image/*" 
+                        onChange={handlePhotoChange} 
+                        className="hidden" 
+                      />
                       <Button
                         type="button"
                         variant="outline"
                         onClick={() => document.getElementById("photo")?.click()}
-                        className="w-full"
+                        className="w-full btn-touch"
                       >
                         <Upload className="h-4 w-4 mr-2" />
                         {busPhoto ? busPhoto.name : "Choose Photo"}
@@ -604,22 +711,19 @@ export default function ManagePage() {
                     </div>
                     {busPhotoPreview && (
                       <div className="mt-2">
-                        <div className="relative w-[200px] h-[150px] rounded-lg overflow-hidden bg-gray-100">
+                        <div className="relative w-full max-w-[200px] h-[150px] rounded-lg overflow-hidden bg-gray-100">
                           <Image
-                            src={busPhotoPreview || "/placeholder.svg"}
+                            src={busPhotoPreview}
                             alt="Bus preview"
                             fill
                             className="object-cover"
-                            onError={(e) => {
-                              console.error("Preview image error:", e)
-                            }}
                             unoptimized={true}
                           />
                         </div>
                       </div>
                     )}
                   </div>
-                  <Button type="submit" className="w-full" disabled={busLoading}>
+                  <Button type="submit" className="w-full btn-touch" disabled={busLoading}>
                     {busLoading ? (
                       <>
                         <Loading size="sm" />
@@ -636,24 +740,23 @@ export default function ManagePage() {
               </CardContent>
             </Card>
 
-            {/* Bus List */}
+            {/* Bus List - Enhanced Mobile */}
             <Card>
               <CardHeader>
-                <CardTitle>Bus Fleet ({buses.length})</CardTitle>
+                <CardTitle className="text-lg md:text-xl">Bus Fleet ({buses.length})</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3 max-h-96 overflow-y-auto">
+                <div className="space-y-3 max-h-96 overflow-y-auto scrollbar-thin">
                   {buses.map((bus) => (
-                    <div key={bus.id} className="flex items-center gap-3 p-3 border rounded-lg">
+                    <div key={bus.id} className="flex items-center gap-3 p-3 border rounded-lg animate-fadeIn">
                       {bus.photo_url && (
-                        <div className="relative w-[60px] h-[45px] rounded overflow-hidden bg-gray-100">
+                        <div className="relative w-[60px] h-[45px] rounded overflow-hidden bg-gray-100 flex-shrink-0">
                           <Image
-                            src={bus.photo_url || "/placeholder.svg"}
+                            src={bus.photo_url}
                             alt={bus.nickname}
                             fill
                             className="object-cover"
                             onError={(e) => {
-                              console.error("Image load error:", e)
                               const target = e.target as HTMLImageElement
                               if (target.parentElement) {
                                 target.parentElement.style.display = "none"
@@ -663,9 +766,9 @@ export default function ManagePage() {
                           />
                         </div>
                       )}
-                      <div className="flex-1">
-                        <h3 className="font-semibold">{bus.nickname}</h3>
-                        <p className="text-sm text-gray-500">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold truncate">{bus.nickname}</h3>
+                        <p className="text-sm text-gray-500 truncate">
                           {bus.code} • {bus.crew}
                         </p>
                         <span
@@ -679,7 +782,13 @@ export default function ManagePage() {
                           {bus.is_active ? "On Trip" : "In Garage"}
                         </span>
                       </div>
-                      <Button variant="outline" size="sm" onClick={() => handleDeleteBus(bus)} disabled={bus.is_active}>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => handleDeleteBus(bus)} 
+                        disabled={bus.is_active}
+                        className="btn-touch"
+                      >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
@@ -698,20 +807,23 @@ export default function ManagePage() {
 
         {activeTab === "trips" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Create Trip Form */}
+            {/* Create Trip Form - Enhanced Mobile */}
             <Card>
               <CardHeader>
-                <CardTitle>Create New Trip</CardTitle>
+                <CardTitle className="text-lg md:text-xl flex items-center gap-2">
+                  Create New Trip
+                  <Heart className="h-4 w-4 text-red-500" title="Uses favorite locations" />
+                </CardTitle>
               </CardHeader>
               <CardContent>
-                <form onSubmit={handleCreateTrip} className="space-y-4">
+                <form onSubmit={handleCreateTrip} className="space-y-4 form-mobile">
                   <div>
                     <Label htmlFor="busId">Select Bus</Label>
                     <select
                       id="busId"
                       value={tripForm.bus_id}
                       onChange={(e) => setTripForm((prev) => ({ ...prev, bus_id: e.target.value }))}
-                      className="w-full p-2 border rounded-md"
+                      className="w-full p-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
                       required
                     >
                       <option value="">Choose a bus...</option>
@@ -728,6 +840,7 @@ export default function ManagePage() {
                       </div>
                     )}
                   </div>
+                  
                   <div>
                     <Label>Departure Point</Label>
                     <div className="flex gap-2 mt-1">
@@ -741,18 +854,20 @@ export default function ManagePage() {
                         type="button"
                         variant="outline"
                         onClick={() => setShowLocationPicker({ type: "departure" })}
+                        className="btn-touch"
                       >
                         <MapPin className="h-4 w-4" />
                       </Button>
                     </div>
                   </div>
+                  
                   <div>
-                    <Label>Stop Points</Label>
+                    <Label>Stop Points (Optional)</Label>
                     <div className="space-y-2 mt-1">
                       {tripForm.stops.map((stop, index) => (
                         <div key={index} className="flex items-center gap-2 p-2 bg-gray-50 rounded">
-                          <div className="flex-1">
-                            <div className="font-medium text-sm">{stop.name}</div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-sm truncate">{stop.name}</div>
                             <div className="flex items-center gap-2 mt-1">
                               <Clock className="h-3 w-3 text-gray-400" />
                               <input
@@ -766,7 +881,13 @@ export default function ManagePage() {
                               <span className="text-xs text-gray-500">minutes</span>
                             </div>
                           </div>
-                          <Button type="button" variant="outline" size="sm" onClick={() => removeStop(index)}>
+                          <Button 
+                            type="button" 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={() => removeStop(index)}
+                            className="btn-touch"
+                          >
                             Remove
                           </Button>
                         </div>
@@ -775,13 +896,14 @@ export default function ManagePage() {
                         type="button"
                         variant="outline"
                         onClick={() => setShowLocationPicker({ type: "stop" })}
-                        className="w-full"
+                        className="w-full btn-touch"
                       >
                         <Plus className="h-4 w-4 mr-2" />
                         Add Stop
                       </Button>
                     </div>
                   </div>
+                  
                   <div>
                     <Label>Final Destination</Label>
                     <div className="flex gap-2 mt-1">
@@ -795,14 +917,16 @@ export default function ManagePage() {
                         type="button"
                         variant="outline"
                         onClick={() => setShowLocationPicker({ type: "destination" })}
+                        className="btn-touch"
                       >
                         <MapPin className="h-4 w-4" />
                       </Button>
                     </div>
                   </div>
+                  
                   <Button
                     type="submit"
-                    className="w-full"
+                    className="w-full btn-touch"
                     disabled={
                       tripLoading ||
                       availableBuses.length === 0 ||
@@ -826,12 +950,12 @@ export default function ManagePage() {
               </CardContent>
             </Card>
 
-            {/* Trip List */}
+            {/* Trip List - Enhanced Mobile */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between">
-                  <span>Trip History ({trips.length})</span>
-                  <div className="flex gap-2 text-xs">
+                  <span className="text-lg md:text-xl">Trip History ({trips.length})</span>
+                  <div className="flex gap-1 text-xs">
                     <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded">
                       Pending: {pendingTrips.length}
                     </span>
@@ -843,13 +967,13 @@ export default function ManagePage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3 max-h-96 overflow-y-auto">
+                <div className="space-y-3 max-h-96 overflow-y-auto scrollbar-thin">
                   {trips.map((trip) => {
                     const bus = buses.find((b) => b.id === trip.bus_id)
                     return (
-                      <div key={trip.id} className="p-3 border rounded-lg">
+                      <div key={trip.id} className="p-3 border rounded-lg animate-fadeIn">
                         <div className="flex items-center justify-between mb-2">
-                          <h3 className="font-semibold">{bus?.nickname || "Unknown Bus"}</h3>
+                          <h3 className="font-semibold truncate">{bus?.nickname || "Unknown Bus"}</h3>
                           <div className="flex items-center gap-2">
                             <span
                               className={`px-2 py-1 rounded-full text-xs flex items-center gap-1 ${
@@ -875,6 +999,7 @@ export default function ManagePage() {
                                 size="sm"
                                 onClick={() => handleStartTrip(trip)}
                                 disabled={backendStatus !== "connected"}
+                                className="btn-touch"
                               >
                                 <Play className="h-4 w-4" />
                               </Button>
@@ -885,12 +1010,18 @@ export default function ManagePage() {
                                 variant="destructive"
                                 onClick={() => handleCancelTrip(trip)}
                                 disabled={backendStatus !== "connected"}
+                                className="btn-touch"
                               >
                                 <Square className="h-4 w-4" />
                               </Button>
                             )}
                             {(trip.status === "COMPLETED" || trip.status === "CANCELLED") && (
-                              <Button size="sm" variant="outline" onClick={() => handleDeleteTrip(trip)}>
+                              <Button 
+                                size="sm" 
+                                variant="outline" 
+                                onClick={() => handleDeleteTrip(trip)}
+                                className="btn-touch"
+                              >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             )}
@@ -898,17 +1029,17 @@ export default function ManagePage() {
                         </div>
                         <div className="text-sm text-gray-600 space-y-1">
                           <p className="flex items-center gap-2">
-                            <MapPin className="h-3 w-3 text-green-600" />
-                            From: {trip.departure.name}
+                            <MapPin className="h-3 w-3 text-green-600 flex-shrink-0" />
+                            <span className="truncate">From: {trip.departure.name}</span>
                           </p>
                           <p className="flex items-center gap-2">
-                            <MapPin className="h-3 w-3 text-red-600" />
-                            To: {trip.destination.name}
+                            <MapPin className="h-3 w-3 text-red-600 flex-shrink-0" />
+                            <span className="truncate">To: {trip.destination.name}</span>
                           </p>
                           {trip.stops.length > 0 && (
                             <p className="flex items-start gap-2">
-                              <Clock className="h-3 w-3 text-gray-400 mt-0.5" />
-                              Stops: {trip.stops.map((stop) => stop.name).join(", ")}
+                              <Clock className="h-3 w-3 text-gray-400 mt-0.5 flex-shrink-0" />
+                              <span className="text-xs">Stops: {trip.stops.map((stop) => stop.name).join(", ")}</span>
                             </p>
                           )}
                           {trip.status === "IN_PROGRESS" && (
@@ -919,13 +1050,13 @@ export default function ManagePage() {
                               </div>
                               <div className="w-full bg-gray-200 rounded-full h-1.5">
                                 <div
-                                  className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+                                  className="bg-blue-600 h-1.5 rounded-full transition-all duration-500"
                                   style={{ width: `${trip.progress}%` }}
                                 />
                               </div>
                               <div className="flex justify-between items-center mt-1 text-xs text-gray-500">
                                 <span>Speed: {trip.speed} km/h</span>
-                                <span>Backend Tracking</span>
+                                <span>Realistic Timing</span>
                               </div>
                             </div>
                           )}

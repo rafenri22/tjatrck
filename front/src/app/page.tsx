@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import dynamic from "next/dynamic"
 import { initializeRealtime, realtimeStore } from "@/lib/realtime"
 import type { Bus, Trip, BusLocation } from "@/types"
@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Loading } from "@/components/ui/loading"
 import { useToast } from "@/hooks/use-toast"
-import { Map, Clock, MapPin, Users, Wifi, WifiOff, RefreshCw, Home } from "lucide-react"
+import { Map, Clock, MapPin, Users, Wifi, WifiOff, RefreshCw, Home, Maximize2 } from "lucide-react"
 import { GlobalTracker } from "@/components/tracking/GlobalTracker"
 
 const BusMap = dynamic(() => import("@/components/map/BusMap"), {
@@ -26,7 +26,29 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isOnline, setIsOnline] = useState(true)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const { toast } = useToast()
+
+  // Auto-refresh posisi bus setiap 10 detik
+  const refreshBusPositions = useCallback(async () => {
+    try {
+      // Hanya refresh data bus locations tanpa reload halaman
+      const currentLocations = realtimeStore.getBusLocations()
+      const currentTrips = realtimeStore.getTrips()
+      const currentBuses = realtimeStore.getBuses()
+      
+      // Update state hanya jika ada perubahan
+      setBusLocations([...currentLocations])
+      setTrips([...currentTrips])
+      setBuses([...currentBuses])
+      
+      setLastUpdate(new Date().toLocaleTimeString())
+      setIsOnline(true)
+    } catch (refreshError) {
+      console.error("Failed to refresh bus positions:", refreshError)
+      setIsOnline(false)
+    }
+  }, [])
 
   // Initialize real-time system
   useEffect(() => {
@@ -40,12 +62,17 @@ export default function HomePage() {
         // Initialize real-time subscriptions
         cleanup = await initializeRealtime()
 
-        // Subscribe to store changes
+        // Subscribe to store changes dengan debounce
+        let timeoutId: NodeJS.Timeout
         const unsubscribe = realtimeStore.subscribe(() => {
-          console.log("📡 Store updated, refreshing UI...")
-          setBuses([...realtimeStore.getBuses()])
-          setTrips([...realtimeStore.getTrips()])
-          setBusLocations([...realtimeStore.getBusLocations()])
+          clearTimeout(timeoutId)
+          timeoutId = setTimeout(() => {
+            console.log("📡 Store updated, refreshing UI...")
+            setBuses([...realtimeStore.getBuses()])
+            setTrips([...realtimeStore.getTrips()])
+            setBusLocations([...realtimeStore.getBusLocations()])
+            setLastUpdate(new Date().toLocaleTimeString())
+          }, 100) // Debounce 100ms untuk performa
         })
 
         // Set initial data
@@ -58,7 +85,7 @@ export default function HomePage() {
 
         toast({
           title: "🚌 System Connected",
-          description: `Real-time tracking active`,
+          description: "Real-time tracking active",
           variant: "success",
         })
 
@@ -66,6 +93,7 @@ export default function HomePage() {
         return () => {
           unsubscribe()
           if (cleanup) cleanup()
+          clearTimeout(timeoutId)
         }
       } catch (error) {
         console.error("❌ Error initializing real-time system:", error)
@@ -88,7 +116,13 @@ export default function HomePage() {
     }
   }, [toast])
 
-  // Update timestamp
+  // Auto-refresh setiap 10 detik
+  useEffect(() => {
+    const interval = setInterval(refreshBusPositions, 10000) // 10 detik
+    return () => clearInterval(interval)
+  }, [refreshBusPositions])
+
+  // Update timestamp setiap detik
   useEffect(() => {
     const interval = setInterval(() => {
       setLastUpdate(new Date().toLocaleTimeString())
@@ -97,29 +131,16 @@ export default function HomePage() {
     return () => clearInterval(interval)
   }, [])
 
-  // Auto-refresh data every 30 seconds as backup
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      console.log("🔄 Auto-refresh backup...")
-      try {
-        await initializeRealtime()
-      } catch (error) {
-        console.error("❌ Auto-refresh failed:", error)
-      }
-    }, 30000)
-
-    return () => clearInterval(interval)
+  // Handle bus click
+  const handleBusClick = useCallback((bus: Bus, trip?: Trip) => {
+    setSelectedBus({ bus, trip })
   }, [])
 
-  // FIXED: Handle bus click with optional trip parameter
-  const handleBusClick = (bus: Bus, trip?: Trip) => {
-    setSelectedBus({ bus, trip })
-  }
-
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     setLoading(true)
     try {
       await initializeRealtime()
+      await refreshBusPositions()
       toast({
         title: "🔄 Refreshed",
         description: "Data updated successfully",
@@ -134,12 +155,23 @@ export default function HomePage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [refreshBusPositions, toast])
 
-  const handleBackToHome = () => {
-    // Redirect to company profile or homepage
+  const handleBackToHome = useCallback(() => {
     window.location.href = "https://trijayaagunglestari.web.id"
-  }
+  }, [])
+
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().then(() => {
+        setIsFullscreen(true)
+      }).catch(console.error)
+    } else {
+      document.exitFullscreen().then(() => {
+        setIsFullscreen(false)
+      }).catch(console.error)
+    }
+  }, [])
 
   const activeTrips = trips.filter((trip) => trip.status === "IN_PROGRESS")
   const activeBuses = buses.filter((bus) => bus.is_active)
@@ -147,7 +179,9 @@ export default function HomePage() {
   if (loading) {
     return (
       <div className="h-screen flex items-center justify-center bg-gray-50">
-        <Loading text="Loading bus tracking system..." size="lg" />
+        <div className="animate-fadeIn">
+          <Loading text="Loading bus tracking system..." size="lg" />
+        </div>
       </div>
     )
   }
@@ -155,18 +189,18 @@ export default function HomePage() {
   if (error) {
     return (
       <div className="h-screen flex items-center justify-center bg-gray-50 p-4">
-        <div className="text-center max-w-md mx-auto p-6">
+        <div className="text-center max-w-md mx-auto p-6 animate-fadeIn">
           <div className="text-red-500 mb-4">
             <WifiOff className="h-16 w-16 mx-auto mb-4" />
           </div>
           <h2 className="text-xl font-semibold text-gray-900 mb-2">Connection Error</h2>
           <p className="text-gray-600 mb-4 text-sm">{error}</p>
           <div className="space-y-2">
-            <Button onClick={handleRefresh} className="w-full">
+            <Button onClick={handleRefresh} className="w-full btn-touch">
               <RefreshCw className="h-4 w-4 mr-2" />
               Retry Connection
             </Button>
-            <p className="text-sm text-gray-500">Make sure your Supabase credentials are correct</p>
+            <p className="text-sm text-gray-500">Make sure your internet connection is stable</p>
           </div>
         </div>
       </div>
@@ -174,38 +208,38 @@ export default function HomePage() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
+    <div className="h-screen flex flex-col bg-gray-50 safe-area-inset-top safe-area-inset-bottom">
       {/* Global Tracker Component */}
       <GlobalTracker />
 
-      {/* Header - Responsive */}
-      <header className="bg-white shadow-sm border-b p-3 md:p-4 z-10">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 md:gap-3">
-            <div className="p-1.5 md:p-2 bg-blue-100 rounded-lg">
+      {/* Header - Enhanced Mobile Responsiveness */}
+      <header className="bg-white shadow-sm border-b p-responsive z-10 no-select">
+        <div className="flex items-center justify-between gap-responsive">
+          <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
+            <div className="p-1.5 md:p-2 bg-blue-100 rounded-lg flex-shrink-0">
               <Map className="h-5 w-5 md:h-6 md:w-6 text-blue-600" />
             </div>
-            <div>
-              <h1 className="text-lg md:text-xl font-bold text-gray-900">TJA Tracking System</h1>
-              <p className="text-xs md:text-sm text-gray-500 flex items-center gap-2">
-                Trijaya Agung Real-time bus monitoring
+            <div className="min-w-0 flex-1">
+              <h1 className="text-base md:text-xl font-bold text-gray-900 truncate">TJA Tracking</h1>
+              <p className="text-xs md:text-sm text-gray-500 flex items-center gap-1 md:gap-2">
+                <span className="truncate">Real-time monitoring</span>
                 {isOnline ? (
-                  <span className="flex items-center gap-1 text-green-600">
+                  <span className="flex items-center gap-1 text-green-600 flex-shrink-0">
                     <Wifi className="h-3 w-3" />
-                    <span className="hidden sm:inline">Connected</span>
+                    <span className="hidden sm:inline">Live</span>
                   </span>
                 ) : (
-                  <span className="flex items-center gap-1 text-red-600">
+                  <span className="flex items-center gap-1 text-red-600 flex-shrink-0">
                     <WifiOff className="h-3 w-3" />
-                    <span className="hidden sm:inline">Disconnected</span>
+                    <span className="hidden sm:inline">Offline</span>
                   </span>
                 )}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 md:gap-4">
-            {/* Status Cards - Responsive */}
+          <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
+            {/* Status Cards - Better Mobile Layout */}
             <div className="hidden sm:flex gap-2">
               <Card className="p-2 md:p-3 bg-white border border-gray-200">
                 <div className="text-xs md:text-sm">
@@ -221,10 +255,10 @@ export default function HomePage() {
               </Card>
             </div>
 
-            {/* Mobile Status */}
+            {/* Mobile Compact Status */}
             <div className="sm:hidden">
               <Card className="p-2 bg-white border border-gray-200">
-                <div className="text-xs">
+                <div className="text-xs whitespace-nowrap">
                   <span className="font-medium text-blue-600">{activeBuses.length}</span>
                   <span className="text-gray-600 mx-1">/</span>
                   <span className="font-medium text-gray-600">{buses.length}</span>
@@ -232,22 +266,32 @@ export default function HomePage() {
               </Card>
             </div>
 
-            <Button size="sm" variant="outline" onClick={handleRefresh}>
+            {/* Action Buttons */}
+            <Button size="sm" variant="outline" onClick={handleRefresh} className="btn-touch">
               <RefreshCw className="h-4 w-4" />
             </Button>
 
             <Button
               size="sm"
               variant="outline"
+              onClick={toggleFullscreen}
+              className="btn-touch hidden md:flex"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </Button>
+
+            <Button
+              size="sm"
+              variant="outline"
               onClick={handleBackToHome}
-              className="hidden md:flex items-center gap-2 bg-transparent"
+              className="btn-touch hidden md:flex items-center gap-2 bg-transparent"
             >
               <Home className="h-4 w-4" />
               <span className="hidden lg:inline">Beranda</span>
             </Button>
 
             {/* Mobile Home Button */}
-            <Button size="sm" variant="outline" onClick={handleBackToHome} className="md:hidden bg-transparent">
+            <Button size="sm" variant="outline" onClick={handleBackToHome} className="btn-touch md:hidden bg-transparent">
               <Home className="h-4 w-4" />
             </Button>
           </div>
@@ -261,7 +305,7 @@ export default function HomePage() {
       </header>
 
       {/* Main Content - Map */}
-      <main className="flex-1 relative">
+      <main className="flex-1 relative overflow-hidden">
         <BusMap
           buses={buses}
           trips={activeTrips}
@@ -271,33 +315,33 @@ export default function HomePage() {
           autoFit={false}
         />
 
-        {/* Last Update Info - Responsive */}
+        {/* Last Update Info - Enhanced Mobile */}
         {lastUpdate && (
-          <div className="absolute bottom-2 md:bottom-4 left-2 md:left-4 z-[1000] bg-white px-2 md:px-3 py-1 md:py-2 rounded-full shadow-lg text-xs text-gray-600 border">
-            <div className="flex items-center gap-1 md:gap-2">
+          <div className="absolute bottom-4 left-4 z-[1000] bg-white/95 backdrop-blur-sm px-3 py-2 rounded-full shadow-lg text-xs text-gray-600 border animate-fadeIn">
+            <div className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500 animate-pulse" : "bg-red-500"}`}></div>
               <span className="hidden sm:inline">Last update:</span>
               <span className="sm:hidden">Update:</span>
-              {lastUpdate}
+              <span className="font-mono">{lastUpdate}</span>
             </div>
           </div>
         )}
 
-        {/* Real-time Status - Responsive */}
-        <div className="absolute top-2 md:top-4 right-2 md:right-4 z-[1000] bg-white px-2 md:px-3 py-1 md:py-2 rounded-lg shadow-lg text-xs text-gray-600 border">
-          <div className="flex items-center gap-1 md:gap-2">
+        {/* Real-time Status - Enhanced Mobile */}
+        <div className="absolute top-4 right-4 z-[1000] bg-white/95 backdrop-blur-sm px-3 py-2 rounded-lg shadow-lg text-xs text-gray-600 border animate-fadeIn">
+          <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <span className="hidden sm:inline">Real-time tracking •</span>
+            <span className="hidden sm:inline">Real-time •</span>
             <span className="sm:hidden">Live •</span>
-            <span>{activeTrips.length} trips</span>
+            <span className="font-medium">{activeTrips.length} trips</span>
           </div>
         </div>
 
-        {/* No Data Message - Responsive */}
+        {/* No Data Message - Enhanced */}
         {activeBuses.length === 0 && !loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-90 p-4">
-            <div className="text-center max-w-md mx-auto p-6">
-              <Map className="h-12 md:h-16 w-12 md:w-16 text-gray-400 mx-auto mb-4" />
+          <div className="absolute inset-0 flex items-center justify-center bg-white/90 backdrop-blur-sm p-4">
+            <div className="text-center max-w-md mx-auto p-6 animate-fadeIn">
+              <Map className="h-16 w-16 text-gray-400 mx-auto mb-4" />
               <h3 className="text-lg font-semibold text-gray-700 mb-2">No Active Buses</h3>
               <p className="text-gray-500 mb-4 text-sm">All buses are currently parked at Garasi (Purbalingga)</p>
               <p className="text-xs text-gray-400">Admin can start trips from the management panel</p>
@@ -306,9 +350,9 @@ export default function HomePage() {
         )}
       </main>
 
-      {/* Bus Detail Dialog - Responsive - FIXED */}
+      {/* Bus Detail Dialog - Enhanced Mobile */}
       <Dialog open={!!selectedBus} onOpenChange={() => setSelectedBus(null)}>
-        <DialogContent className="max-w-sm md:max-w-md mx-4">
+        <DialogContent className="max-w-sm md:max-w-md mx-4 max-h-[90vh] overflow-y-auto scrollbar-thin">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg">
               <Map className="h-5 w-5" />
@@ -318,19 +362,18 @@ export default function HomePage() {
 
           {selectedBus && (
             <div className="space-y-4">
-              {/* Bus Photo - FIXED to always show with better error handling */}
+              {/* Bus Photo - Enhanced Loading */}
               <div className="relative h-32 md:h-48 w-full rounded-lg overflow-hidden bg-gray-100">
                 {selectedBus.bus.photo_url ? (
                   <img
-                    src={selectedBus.bus.photo_url || "/placeholder.svg"}
+                    src={selectedBus.bus.photo_url}
                     alt={selectedBus.bus.nickname}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-cover transition-opacity duration-300"
                     onLoad={(e) => {
-                      ;(e.target as HTMLImageElement).style.opacity = "1"
+                      (e.target as HTMLImageElement).style.opacity = "1"
                     }}
                     onError={(e) => {
                       const target = e.target as HTMLImageElement
-                      target.style.display = "none"
                       const parent = target.parentElement
                       if (parent) {
                         parent.innerHTML = `
@@ -343,7 +386,7 @@ export default function HomePage() {
                         `
                       }
                     }}
-                    style={{ opacity: 0, transition: "opacity 0.3s" }}
+                    style={{ opacity: 0 }}
                   />
                 ) : (
                   <div className="h-full w-full flex items-center justify-center bg-gray-200">
@@ -355,38 +398,38 @@ export default function HomePage() {
                 )}
               </div>
 
-              {/* Bus Info */}
+              {/* Bus Info - Better Mobile Layout */}
               <div className="space-y-3">
                 <div>
-                  <h3 className="text-lg font-semibold">{selectedBus.bus.nickname}</h3>
+                  <h3 className="text-lg font-semibold truncate">{selectedBus.bus.nickname}</h3>
                   <p className="text-sm text-gray-500">Code: {selectedBus.bus.code}</p>
                 </div>
 
-                <div className="grid grid-cols-1 gap-2 text-sm">
+                <div className="grid grid-cols-1 gap-3 text-sm">
                   <div className="flex items-center gap-2">
-                    <Users className="h-4 w-4 text-gray-400" />
-                    <span>Driver: {selectedBus.bus.crew}</span>
+                    <Users className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                    <span className="truncate">Driver: {selectedBus.bus.crew}</span>
                   </div>
 
                   {/* Show trip details only if bus is on trip */}
                   {selectedBus.trip ? (
                     <>
                       <div className="flex items-center gap-2">
-                        <MapPin className="h-4 w-4 text-gray-400" />
-                        <span>From: {selectedBus.trip.departure.name}</span>
+                        <MapPin className="h-4 w-4 text-green-600 flex-shrink-0" />
+                        <span className="truncate">From: {selectedBus.trip.departure.name}</span>
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <MapPin className="h-4 w-4 text-gray-400" />
-                        <span>To: {selectedBus.trip.destination.name}</span>
+                        <MapPin className="h-4 w-4 text-red-600 flex-shrink-0" />
+                        <span className="truncate">To: {selectedBus.trip.destination.name}</span>
                       </div>
 
                       {selectedBus.trip.stops.length > 0 && (
                         <div className="flex items-start gap-2">
-                          <Clock className="h-4 w-4 text-gray-400 mt-0.5" />
-                          <div>
+                          <Clock className="h-4 w-4 text-gray-400 flex-shrink-0 mt-0.5" />
+                          <div className="min-w-0 flex-1">
                             <span className="block">Stops:</span>
-                            <span className="text-gray-600 text-xs">
+                            <span className="text-gray-600 text-xs break-words">
                               {selectedBus.trip.stops.map((stop) => stop.name).join(", ")}
                             </span>
                           </div>
@@ -400,7 +443,7 @@ export default function HomePage() {
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2">
                           <div
-                            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                            className="bg-blue-600 h-2 rounded-full transition-all duration-500"
                             style={{ width: `${selectedBus.trip.progress}%` }}
                           />
                         </div>
@@ -411,7 +454,9 @@ export default function HomePage() {
                       </div>
 
                       {selectedBus.trip.distance && (
-                        <div className="text-sm text-gray-600">Distance: {selectedBus.trip.distance.toFixed(1)} km</div>
+                        <div className="text-sm text-gray-600">
+                          Distance: {selectedBus.trip.distance.toFixed(1)} km
+                        </div>
                       )}
 
                       {selectedBus.trip.estimated_duration && (
@@ -423,7 +468,7 @@ export default function HomePage() {
                     </>
                   ) : (
                     <div className="flex items-center gap-2">
-                      <MapPin className="h-4 w-4 text-gray-400" />
+                      <MapPin className="h-4 w-4 text-gray-400 flex-shrink-0" />
                       <span>Status: Parked at Garasi (Purbalingga)</span>
                     </div>
                   )}
