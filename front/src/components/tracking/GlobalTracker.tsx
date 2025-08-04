@@ -4,7 +4,7 @@ import { useEffect, useRef, useCallback } from "react"
 import { supabase } from "@/lib/supabase"
 import { updateTrip, updateBusStatus, updateBusLocation, deleteBusLocation } from "@/lib/database"
 import { realtimeStore } from "@/lib/realtime"
-import type { Trip } from "@/types"
+import type { Trip, Bus } from "@/types"
 import { useToast } from "@/hooks/use-toast"
 
 // Global tracking intervals
@@ -94,8 +94,8 @@ export function GlobalTracker() {
       // Calculate realistic completion time in minutes
       const estimatedTripTimeMinutes = (totalDistance / realisticSpeed) * 60
       
-      // Calculate progress per update (every 15 seconds for smoother movement)
-      const updateIntervalSeconds = 15
+      // Calculate progress per update (every 10 seconds for smooth real-time movement)
+      const updateIntervalSeconds = 10
       const totalUpdates = Math.ceil(estimatedTripTimeMinutes * 60 / updateIntervalSeconds)
       const progressPerUpdate = 100 / totalUpdates
 
@@ -145,40 +145,50 @@ export function GlobalTracker() {
             speed: Math.round(currentSpeed),
           }
 
-          // If completed, mark as completed
+          // If completed, mark as completed but keep bus at destination
           if (newProgress >= 100) {
             updates.status = "COMPLETED"
             updates.end_time = new Date().toISOString()
+            
+            // Update bus to inactive but keep location at destination
+            await updateBusStatus(trip.bus_id, false)
+            
             toast({
               title: "✅ Trip Completed",
-              description: `${tripName} has reached destination`,
+              description: `${tripName} has reached destination and is parked there`,
               variant: "success",
             })
-          }
-
-          // Update in database
-          await updateTrip(trip.id, updates)
-
-          // Update bus location for real-time tracking with ACCURATE elapsed time
-          if (currentLat && currentLng) {
-            await updateBusLocation({
-              bus_id: trip.bus_id,
-              trip_id: trip.id,
-              lat: currentLat,
-              lng: currentLng,
-              progress: newProgress,
-              elapsed_time_minutes: elapsedTimeMinutes, // Use accurate elapsed time
-              timestamp: Date.now(),
-            })
-          }
-
-          // If completed, clean up
-          if (newProgress >= 100) {
-            await updateBusStatus(trip.bus_id, false)
-            setTimeout(async () => {
-              await deleteBusLocation(trip.bus_id)
-            }, 10000) // Remove after 10 seconds
+            
+            // Keep bus location at destination (don't delete)
+            if (currentLat && currentLng) {
+              await updateBusLocation({
+                bus_id: trip.bus_id,
+                trip_id: trip.id,
+                lat: currentLat,
+                lng: currentLng,
+                progress: 100,
+                elapsed_time_minutes: elapsedTimeMinutes,
+                timestamp: Date.now(),
+              })
+            }
+            
             stopTracking(trip.id)
+          } else {
+            // Update in database for in-progress trips
+            await updateTrip(trip.id, updates)
+
+            // Update bus location for real-time tracking with ACCURATE elapsed time
+            if (currentLat && currentLng) {
+              await updateBusLocation({
+                bus_id: trip.bus_id,
+                trip_id: trip.id,
+                lat: currentLat,
+                lng: currentLng,
+                progress: newProgress,
+                elapsed_time_minutes: elapsedTimeMinutes,
+                timestamp: Date.now(),
+              })
+            }
           }
 
           const formattedTime = `${Math.floor(elapsedTimeMinutes / 60)}h ${Math.floor(elapsedTimeMinutes % 60)}m`
@@ -186,7 +196,7 @@ export function GlobalTracker() {
         } catch (trackingError) {
           console.error("❌ Error in global tracking:", trackingError)
         }
-      }, updateIntervalSeconds * 1000) // Update every 15 seconds for smooth movement
+      }, updateIntervalSeconds * 1000) // Update every 10 seconds for smooth real-time movement
 
       trackingIntervals.set(trip.id, interval)
       console.log(`✅ Global tracking started for: ${tripName} at realistic speed`)
@@ -205,11 +215,11 @@ export function GlobalTracker() {
     }
   }, [])
 
-  // Initialize tracking on mount
+  // Initialize tracking on mount with enhanced real-time subscriptions
   useEffect(() => {
     if (isInitialized.current) return
     isInitialized.current = true
-    console.log("🔄 Initializing Global Tracker with realistic timing...")
+    console.log("🔄 Initializing Global Tracker with enhanced real-time...")
 
     // Start tracking for existing in-progress trips
     const checkAndStartTracking = async () => {
@@ -227,18 +237,18 @@ export function GlobalTracker() {
         
         if (inProgressTrips.length > 0) {
           toast({
-            title: "🚌 Tracking Resumed",
-            description: `Monitoring ${inProgressTrips.length} trips with synced timing`,
+            title: "🚌 Real-time Tracking Active",
+            description: `Monitoring ${inProgressTrips.length} trips with live updates`,
             variant: "default",
           })
         }
-      }, 1000) // Wait 1 second for initial data to load
+      }, 1000)
     }
 
     // Initial check
     checkAndStartTracking()
 
-    // Subscribe to trip changes
+    // Enhanced real-time subscription to trip changes
     const unsubscribe = realtimeStore.subscribe(() => {
       const trips = realtimeStore.getTrips()
       const inProgressTrips = trips.filter((trip) => trip.status === "IN_PROGRESS")
@@ -247,7 +257,7 @@ export function GlobalTracker() {
       // Start tracking for new in-progress trips
       inProgressTrips.forEach((trip) => {
         if (!currentlyTracked.includes(trip.id)) {
-          console.log("🆕 New trip to track:", trip.id.slice(0, 8))
+          console.log("🆕 New trip detected for real-time tracking:", trip.id.slice(0, 8))
           startTracking(trip)
         }
       })
@@ -262,21 +272,65 @@ export function GlobalTracker() {
       })
     })
 
+    // Set up additional real-time monitoring for bus locations
+    const locationUpdateInterval = setInterval(() => {
+      // Force a small notification to ensure UI updates
+      realtimeStore.setBusLocations([...realtimeStore.getBusLocations()])
+    }, 5000) // Every 5 seconds ensure UI is updated
+
     // Cleanup on unmount
     return () => {
       console.log("🧹 Cleaning up Global Tracker")
       trackingIntervals.forEach((interval) => clearInterval(interval))
       trackingIntervals.clear()
       tripStartTimes.clear()
+      clearInterval(locationUpdateInterval)
       isInitialized.current = false
       unsubscribe()
     }
   }, [startTracking, stopTracking, toast])
 
+  // Handle bus positioning for new trips
+  useEffect(() => {
+    const handleNewTrips = () => {
+      const trips = realtimeStore.getTrips()
+      const buses = realtimeStore.getBuses()
+  
+      trips
+        .filter(trip => trip.status === "PENDING")
+        .forEach(async (trip) => {
+          const bus = buses.find(b => b.id === trip.bus_id)
+          if (bus && !bus.is_active) {
+            try {
+              await updateBusLocation({
+                bus_id: trip.bus_id,
+                trip_id: trip.id,
+                lat: trip.departure.lat,
+                lng: trip.departure.lng,
+                progress: 0,
+                elapsed_time_minutes: 0,
+                timestamp: Date.now(),
+              })
+              console.log(`📍 Bus positioned at departure: ${trip.departure.name}`)
+            } catch (error) {
+              console.error("Error positioning bus:", error)
+            }
+          }
+        })
+    }
+  
+    const unsubscribe = realtimeStore.subscribe(handleNewTrips)
+  
+    return () => {
+      // 🔒 Pastikan tidak me-return nilai dari delete
+      unsubscribe() // jalankan saja, jangan return
+    }
+  }, [])  
+
   return null // This is a logic-only component
 }
 
-// Export functions for manual control with enhanced timing
+// Export functions for manual control with enhanced bus positioning
 export const startTripTracking = (trip: Trip) => {
   const buses = realtimeStore.getBuses()
   const bus = buses.find((b) => b.id === trip.bus_id)
@@ -312,7 +366,7 @@ export const startTripTracking = (trip: Trip) => {
 
   const realisticSpeed = getRealisticSpeed(totalDistance)
   const estimatedTripTimeMinutes = (totalDistance / realisticSpeed) * 60
-  const updateIntervalSeconds = 15
+  const updateIntervalSeconds = 10 // Faster updates for smooth real-time
   const totalUpdates = Math.ceil(estimatedTripTimeMinutes * 60 / updateIntervalSeconds)
   const progressPerUpdate = 100 / totalUpdates
 
@@ -351,6 +405,9 @@ export const startTripTracking = (trip: Trip) => {
       if (newProgress >= 100) {
         updates.status = "COMPLETED"
         updates.end_time = new Date().toISOString()
+        
+        // Keep bus at destination, don't return to garage
+        await updateBusStatus(trip.bus_id, false)
       }
 
       await updateTrip(trip.id, updates)
@@ -362,16 +419,12 @@ export const startTripTracking = (trip: Trip) => {
           lat: currentLat,
           lng: currentLng,
           progress: newProgress,
-          elapsed_time_minutes: elapsedTimeMinutes, // Accurate elapsed time
+          elapsed_time_minutes: elapsedTimeMinutes,
           timestamp: Date.now(),
         })
       }
 
       if (newProgress >= 100) {
-        await updateBusStatus(trip.bus_id, false)
-        setTimeout(async () => {
-          await deleteBusLocation(trip.bus_id)
-        }, 10000)
         stopTripTracking(trip.id)
       }
 

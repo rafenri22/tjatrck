@@ -23,7 +23,7 @@ interface BusMapProps {
   autoFit?: boolean
 }
 
-// Format elapsed time for display - FIXED to use actual elapsed time
+// Format elapsed time for display
 const formatElapsedTime = (minutes: number): string => {
   const hours = Math.floor(minutes / 60)
   const mins = Math.floor(minutes % 60)
@@ -33,7 +33,7 @@ const formatElapsedTime = (minutes: number): string => {
   return `${mins}m`
 }
 
-// Generate parking positions around garage
+// Generate parking positions around a center point
 const generateParkingPositions = (centerLat: number, centerLng: number, count: number) => {
   const positions = []
   const radius = 0.002 // Radius in degrees (approximately 200 meters)
@@ -63,11 +63,11 @@ export default function BusMap({
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return
 
-    // Initialize map centered on Java Island instead of garage
+    // Initialize map centered on Java Island
     const javaCenter = [-7.5, 110.0] // Center of Java Island
     const map = L.map(mapRef.current, {
       center: javaCenter as [number, number],
-      zoom: window.innerWidth < 768 ? 7 : 8, // Zoom to show Java Island
+      zoom: window.innerWidth < 768 ? 7 : 8,
       zoomControl: true,
       scrollWheelZoom: true,
       doubleClickZoom: true,
@@ -82,7 +82,7 @@ export default function BusMap({
       maxZoom: 19,
     }).addTo(map)
 
-    // Add garage marker with responsive width
+    // Add garage marker
     const garageIcon = L.divIcon({
       html: `
         <div class="relative">
@@ -97,7 +97,12 @@ export default function BusMap({
     })
 
     const activeBuses = buses.filter((b) => b.is_active).length
-    const inGarage = buses.length - activeBuses
+    const inGarage = buses.filter(bus => {
+      // Check if bus has no location (truly in garage)
+      const hasLocation = busLocations.some(loc => loc.bus_id === bus.id)
+      return !bus.is_active && !hasLocation
+    }).length
+    
     L.marker([GARAGE_LOCATION.lat, GARAGE_LOCATION.lng], { icon: garageIcon })
       .bindPopup(`
         <div class="p-3 min-w-[200px]">
@@ -106,6 +111,7 @@ export default function BusMap({
             <p><strong>Total Buses:</strong> ${buses.length}</p>
             <p><strong>In Garage:</strong> ${inGarage}</p>
             <p><strong>On Trip:</strong> ${activeBuses}</p>
+            <p><strong>At Destination:</strong> ${buses.length - activeBuses - inGarage}</p>
           </div>
         </div>
       `)
@@ -123,6 +129,7 @@ export default function BusMap({
     }
   }, [buses.length])
 
+  // Update markers with real-time positions
   useEffect(() => {
     if (!mapInstanceRef.current || !initializedRef.current) return
 
@@ -133,40 +140,48 @@ export default function BusMap({
     markers.forEach((marker) => map.removeLayer(marker))
     markers.clear()
 
-    // Add markers for active buses (on trip) - FIXED with proper elapsed time sync
+    // Add markers for buses with locations (active or at destination)
     busLocations.forEach((location) => {
       const trip = trips.find((t) => t.id === location.trip_id)
       const bus = buses.find((b) => b.id === location.bus_id)
-      if (!trip || !bus) return
+      if (!bus) return
 
-      // Calculate actual elapsed time from trip start time and backend sync
+      // Calculate elapsed time
       let elapsedMinutes = 0
-      if (trip.start_time) {
+      if (trip && trip.start_time) {
         const startTime = new Date(trip.start_time).getTime()
         const currentTime = Date.now()
         elapsedMinutes = Math.floor((currentTime - startTime) / (1000 * 60))
       }
       
-      // Use backend elapsed time if available (more accurate)
+      // Use backend elapsed time if available
       if (location.elapsed_time_minutes !== undefined && location.elapsed_time_minutes > 0) {
         elapsedMinutes = location.elapsed_time_minutes
       }
 
       const elapsedTime = formatElapsedTime(elapsedMinutes)
+      const isActive = bus.is_active
+      const isAtDestination = !isActive && location.progress >= 100
 
-      // Bus icon for active buses with zoom-responsive size
+      // Different icons for different states
       const busIcon = L.divIcon({
         html: `
           <div class="relative bus-marker-container" style="transform-origin: center; will-change: transform;">
             <div class="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-white text-gray-800 rounded px-2 py-1 text-xs font-bold shadow-md whitespace-nowrap border max-w-24 truncate">
               ${bus.nickname}
             </div>
-            <div class="bg-blue-600 text-white rounded-full w-14 h-14 flex items-center justify-center text-xs font-bold shadow-lg border-2 border-white cursor-pointer hover:bg-blue-700 transition-colors">
+            <div class="${isActive ? 'bg-blue-600 hover:bg-blue-700' : isAtDestination ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-500 hover:bg-gray-600'} text-white rounded-full w-14 h-14 flex items-center justify-center text-xs font-bold shadow-lg border-2 border-white cursor-pointer transition-colors">
               <div class="text-lg">🚌</div>
             </div>
+            ${isActive ? `
             <div class="absolute -bottom-6 left-1/2 transform -translate-x-1/2 bg-green-500 text-white rounded-full px-2 py-1 text-xs font-bold whitespace-nowrap">
               ${elapsedTime}
             </div>
+            ` : isAtDestination ? `
+            <div class="absolute -bottom-6 left-1/2 transform -translate-x-1/2 bg-yellow-500 text-white rounded-full px-2 py-1 text-xs font-bold whitespace-nowrap">
+              Arrived
+            </div>
+            ` : ''}
           </div>
         `,
         className: "custom-bus-marker zoom-responsive",
@@ -174,7 +189,7 @@ export default function BusMap({
         iconAnchor: [28, 28],
       })
 
-      // Update popup content for active buses - FIXED photo display
+      // Enhanced popup content
       const marker = L.marker([location.lat, location.lng], { icon: busIcon })
         .bindPopup(`
           <div class="p-3 min-w-[250px]">
@@ -202,17 +217,29 @@ export default function BusMap({
             </div>
             <div class="space-y-1 text-sm">
               <p><strong>Driver:</strong> ${bus.crew}</p>
-              <p><strong>Speed:</strong> ${trip.speed} km/h</p>
-              <p><strong>Progress:</strong> ${location.progress.toFixed(1)}%</p>
-              <p><strong>Travel Time:</strong> ${elapsedTime}</p>
-              <p><strong>From:</strong> ${trip.departure.name}</p>
-              <p><strong>To:</strong> ${trip.destination.name}</p>
+              ${isActive ? `
+                <p><strong>Speed:</strong> ${trip?.speed || 0} km/h</p>
+                <p><strong>Progress:</strong> ${location.progress.toFixed(1)}%</p>
+                <p><strong>Travel Time:</strong> ${elapsedTime}</p>
+                <p><strong>Status:</strong> <span class="text-blue-600">En Route</span></p>
+              ` : isAtDestination ? `
+                <p><strong>Status:</strong> <span class="text-green-600">At Destination</span></p>
+                <p><strong>Total Travel Time:</strong> ${elapsedTime}</p>
+                <p><strong>Arrival:</strong> ${trip?.end_time ? new Date(trip.end_time).toLocaleString() : 'Recently'}</p>
+              ` : `
+                <p><strong>Status:</strong> <span class="text-gray-600">Parked</span></p>
+              `}
+              ${trip ? `
+                <p><strong>From:</strong> ${trip.departure.name}</p>
+                <p><strong>To:</strong> ${trip.destination.name}</p>
+                ${trip.distance ? `<p><strong>Distance:</strong> ${trip.distance.toFixed(1)} km</p>` : ''}
+              ` : ''}
             </div>
             ${
               showControls
                 ? `
               <div class="mt-3 pt-2 border-t">
-                <button onclick="window.showBusDetails('${bus.id}', '${trip.id}')" class="w-full bg-blue-600 text-white px-3 py-2 rounded text-sm hover:bg-blue-700">
+                <button onclick="window.showBusDetails('${bus.id}', '${trip?.id || ''}')" class="w-full bg-blue-600 text-white px-3 py-2 rounded text-sm hover:bg-blue-700">
                   View Details
                 </button>
               </div>
@@ -223,7 +250,7 @@ export default function BusMap({
         `)
         .addTo(map)
 
-      // Add click handler for active buses
+      // Add click handler
       if (onBusClick) {
         marker.on("click", () => {
           onBusClick(bus, trip)
@@ -233,14 +260,17 @@ export default function BusMap({
       markers.set(location.bus_id, marker)
     })
 
-    // Add parked buses at garage - FIXED click handler
-    const parkedBuses = buses.filter((bus) => !bus.is_active)
+    // Add parked buses at garage (only buses without locations)
+    const parkedBuses = buses.filter((bus) => {
+      const hasLocation = busLocations.some(loc => loc.bus_id === bus.id)
+      return !bus.is_active && !hasLocation
+    })
+    
     if (parkedBuses.length > 0) {
       const parkingPositions = generateParkingPositions(GARAGE_LOCATION.lat, GARAGE_LOCATION.lng, parkedBuses.length)
       parkedBuses.forEach((bus, index) => {
         const position = parkingPositions[index] || { lat: GARAGE_LOCATION.lat, lng: GARAGE_LOCATION.lng }
 
-        // Parked bus icon with zoom-responsive size
         const parkedBusIcon = L.divIcon({
           html: `
             <div class="relative bus-marker-container" style="transform-origin: center; will-change: transform;">
@@ -302,12 +332,10 @@ export default function BusMap({
           `)
           .addTo(map)
 
-        // FIXED: Proper click handler for parked buses
         if (onBusClick) {
           parkedMarker.on("click", (e) => {
-            // Prevent event bubbling
             L.DomEvent.stopPropagation(e)
-            onBusClick(bus) // No trip for parked buses
+            onBusClick(bus)
           })
         }
 
@@ -315,10 +343,10 @@ export default function BusMap({
       })
     }
 
-    // Only auto-fit if explicitly requested and there are active buses
+    // Auto-fit if requested and there are active buses
     if (autoFit && busLocations.length > 0) {
       const activeMarkers = Array.from(markers.values()).filter((marker, index) => 
-        index < busLocations.length // Only active bus markers
+        index < busLocations.length
       )
       if (activeMarkers.length > 0) {
         const group = new L.FeatureGroup(activeMarkers)
@@ -328,33 +356,25 @@ export default function BusMap({
 
     // Global functions for popup buttons
     if (showControls) {
-      // For active buses
-      ;(window as unknown as { showBusDetails: (busId: string, tripId: string) => void }).showBusDetails = (
-        busId: string,
-        tripId: string,
-      ) => {
+      ;(window as any).showBusDetails = (busId: string, tripId: string) => {
         const bus = buses.find((b) => b.id === busId)
         const trip = trips.find((t) => t.id === tripId)
-        if (bus && trip && onBusClick) {
+        if (bus && onBusClick) {
           onBusClick(bus, trip)
         }
       }
-      // For parked buses
-      ;(window as unknown as { showParkedBusDetails: (busId: string) => void }).showParkedBusDetails = (
-        busId: string,
-      ) => {
+      ;(window as any).showParkedBusDetails = (busId: string) => {
         const bus = buses.find((b) => b.id === busId)
         if (bus && onBusClick) {
-          onBusClick(bus) // No trip for parked buses
+          onBusClick(bus)
         }
       }
     }
 
-    // Add zoom event listener to control icon scaling
+    // Add zoom event listener for responsive scaling
     map.on("zoomend", () => {
       const zoom = map.getZoom()
-      const scale = Math.max(0.5, Math.min(1.5, zoom / 12)) // Scale between 0.5x and 1.5x based on zoom level
-      // Apply scaling to all bus markers
+      const scale = Math.max(0.5, Math.min(1.5, zoom / 12))
       const busMarkers = document.querySelectorAll(".bus-marker-container")
       busMarkers.forEach((marker) => {
         ;(marker as HTMLElement).style.transform = `scale(${scale})`

@@ -3,118 +3,179 @@ import type { Location } from "@/types"
 // OSRM API for real routing
 const OSRM_BASE_URL = "https://router.project-osrm.org"
 
-// Toll road entrance/exit points in Java (major highways)
+// Complete toll road entrance/exit points in Java Island
 const TOLL_GATES = [
-  // Jakarta area
-  { name: "Tol Cikampek", lat: -6.2088, lng: 106.8456, type: "entrance" },
-  { name: "Tol Jagorawi", lat: -6.5622, lng: 106.7999, type: "entrance" },
-  { name: "Tol Tangerang", lat: -6.1781, lng: 106.6297, type: "entrance" },
+  // Jakarta & Surrounding (DKI Jakarta, Banten, West Java)
+  { name: "Tol Jakarta-Cikampek KM 0", lat: -6.1751, lng: 106.8650, type: "entrance", region: "Jakarta" },
+  { name: "Tol Jakarta-Cikampek KM 72", lat: -6.2088, lng: 107.4456, type: "exit", region: "Karawang" },
+  { name: "Tol Jagorawi Cibubur", lat: -6.3751, lng: 106.8913, type: "entrance", region: "Jakarta" },
+  { name: "Tol Jagorawi Bogor", lat: -6.5622, lng: 106.7999, type: "exit", region: "Bogor" },
+  { name: "Tol Jakarta Outer Ring Road", lat: -6.2088, lng: 106.8456, type: "entrance", region: "Jakarta" },
   
-  // West Java
-  { name: "Tol Cipali", lat: -6.7368, lng: 108.2127, type: "entrance" },
-  { name: "Tol Cirebon", lat: -6.7368, lng: 108.5571, type: "entrance" },
-  { name: "Tol Padaleunyi", lat: -6.9175, lng: 107.6191, type: "entrance" },
+  // Tangerang Area
+  { name: "Tol Jakarta-Tangerang Karang Tengah", lat: -6.1781, lng: 106.6297, type: "entrance", region: "Tangerang" },
+  { name: "Tol Serpong-Pamulang", lat: -6.3373, lng: 106.7042, type: "entrance", region: "Tangerang Selatan" },
+  { name: "Tol BSD-Serpong", lat: -6.2751, lng: 106.6500, type: "entrance", region: "Tangerang Selatan" },
+  
+  // West Java Major Tolls
+  { name: "Tol Cipali Cikampek", lat: -6.2088, lng: 107.4456, type: "entrance", region: "Karawang" },
+  { name: "Tol Cipali Palimanan", lat: -6.7063, lng: 108.4271, type: "exit", region: "Cirebon" },
+  { name: "Tol Cirebon-Kanci", lat: -6.7063, lng: 108.5571, type: "entrance", region: "Cirebon" },
+  { name: "Tol Kanci-Pejagan", lat: -6.7560, lng: 109.0234, type: "entrance", region: "Brebes" },
+  
+  // Bandung Area
+  { name: "Tol Padaleunyi Pasteur", lat: -6.8915, lng: 107.5707, type: "entrance", region: "Bandung" },
+  { name: "Tol Padaleunyi Cileunyi", lat: -6.9175, lng: 107.7591, type: "exit", region: "Bandung" },
+  { name: "Tol Purbaleunyi Padalarang", lat: -6.8373, lng: 107.4771, type: "entrance", region: "Bandung Barat" },
+  { name: "Tol Purbaleunyi Cileunyi", lat: -6.9175, lng: 107.7591, type: "exit", region: "Bandung" },
   
   // Central Java
-  { name: "Tol Batang-Semarang", lat: -6.9147, lng: 109.7425, type: "entrance" },
-  { name: "Tol Semarang-Solo", lat: -7.0051, lng: 110.4381, type: "entrance" },
-  { name: "Tol Madiun-Ngawi", lat: -7.6298, lng: 111.5239, type: "entrance" },
+  { name: "Tol Pejagan-Pemalang", lat: -6.7560, lng: 109.0234, type: "entrance", region: "Brebes" },
+  { name: "Tol Pemalang-Batang", lat: -6.9147, lng: 109.7425, type: "entrance", region: "Pemalang" },
+  { name: "Tol Batang-Semarang", lat: -6.9147, lng: 109.7425, type: "entrance", region: "Batang" },
+  { name: "Tol Semarang Barat", lat: -7.0051, lng: 110.3681, type: "exit", region: "Semarang" },
+  { name: "Tol Semarang-Solo Bawen", lat: -7.2181, lng: 110.4031, type: "entrance", region: "Semarang" },
+  { name: "Tol Semarang-Solo Kartasura", lat: -7.5563, lng: 110.7446, type: "exit", region: "Sukoharjo" },
+  
+  // Solo & Yogyakarta Area
+  { name: "Tol Solo-Ngawi Sragen", lat: -7.4238, lng: 111.0042, type: "entrance", region: "Sragen" },
+  { name: "Tol Solo-Ngawi Ngawi", lat: -7.4077, lng: 111.4463, type: "exit", region: "Ngawi" },
+  { name: "Tol Yogya-Solo Prambanan", lat: -7.7520, lng: 110.4947, type: "entrance", region: "Sleman" },
+  { name: "Tol Yogya-Solo Kartasura", lat: -7.5563, lng: 110.7446, type: "exit", region: "Sukoharjo" },
   
   // East Java
-  { name: "Tol Surabaya-Mojokerto", lat: -7.4661, lng: 112.4362, type: "entrance" },
-  { name: "Tol Surabaya-Gempol", lat: -7.3554, lng: 112.6275, type: "entrance" },
-  { name: "Tol Malang", lat: -7.9797, lng: 112.6304, type: "entrance" },
+  { name: "Tol Ngawi-Kertosono", lat: -7.4077, lng: 111.4463, type: "entrance", region: "Ngawi" },
+  { name: "Tol Kertosono-Mojokerto", lat: -7.4661, lng: 112.0362, type: "entrance", region: "Nganjuk" },
+  { name: "Tol Mojokerto-Surabaya", lat: -7.4661, lng: 112.4362, type: "entrance", region: "Mojokerto" },
+  { name: "Tol Surabaya Waru", lat: -7.3431, lng: 112.7297, type: "exit", region: "Surabaya" },
+  
+  // Surabaya Area
+  { name: "Tol Surabaya-Gempol Waru", lat: -7.3431, lng: 112.7297, type: "entrance", region: "Surabaya" },
+  { name: "Tol Surabaya-Gempol Gempol", lat: -7.5454, lng: 112.6275, type: "exit", region: "Pasuruan" },
+  { name: "Tol Gempol-Malang", lat: -7.5454, lng: 112.6275, type: "entrance", region: "Pasuruan" },
+  { name: "Tol Malang Singosari", lat: -7.9797, lng: 112.6304, type: "exit", region: "Malang" },
+  
+  // Gerbang Tol Lainnya - Akses ke Pelabuhan & Bandara
+  { name: "Tol Soekarno Hatta Airport", lat: -6.1256, lng: 106.6558, type: "entrance", region: "Tangerang" },
+  { name: "Tol Pelabuhan Tanjung Priok", lat: -6.1067, lng: 106.8808, type: "entrance", region: "Jakarta Utara" },
+  { name: "Tol Pelabuhan Merak", lat: -5.9343, lng: 106.0176, type: "exit", region: "Banten" },
+  
+  // Regional Tolls
+  { name: "Tol Bali Mandara Benoa", lat: -8.7675, lng: 115.1775, type: "entrance", region: "Denpasar" },
+  { name: "Tol Bali Mandara Ngurah Rai", lat: -8.7467, lng: 115.1671, type: "exit", region: "Badung" },
 ]
 
 export interface RouteResponse {
   coordinates: { lat: number; lng: number }[]
   distance: number // in kilometers
   duration: number // in minutes
-  tollGates?: { name: string; lat: number; lng: number }[] // toll gates used
+  tollGates?: { name: string; lat: number; lng: number; type: 'entrance' | 'exit' }[] // toll gates used
+  tollInfo?: string // readable toll info
 }
 
-// Find nearest toll gate to a location
-const findNearestTollGate = (location: Location): { name: string; lat: number; lng: number } => {
-  let nearest = TOLL_GATES[0]
-  let shortestDistance = calculateDistance(location.lat, location.lng, nearest.lat, nearest.lng)
+// Find optimal toll gates for a route segment
+const findOptimalTollRoute = (start: Location, end: Location): { entry: any, exit: any } => {
+  let bestEntry = null
+  let bestExit = null
+  let bestScore = Infinity
   
-  TOLL_GATES.forEach(gate => {
-    const distance = calculateDistance(location.lat, location.lng, gate.lat, gate.lng)
-    if (distance < shortestDistance) {
-      shortestDistance = distance
-      nearest = gate
-    }
+  // Find best entry point near start
+  const entrances = TOLL_GATES.filter(gate => gate.type === 'entrance')
+  const exits = TOLL_GATES.filter(gate => gate.type === 'exit')
+  
+  entrances.forEach(entry => {
+    exits.forEach(exit => {
+      // Calculate total distance via toll
+      const entryDistance = calculateDistance(start.lat, start.lng, entry.lat, entry.lng)
+      const exitDistance = calculateDistance(end.lat, end.lng, exit.lat, exit.lng)
+      const tollDistance = calculateDistance(entry.lat, entry.lng, exit.lat, exit.lng)
+      
+      // Skip if toll gates are too close to each other (< 20km)
+      if (tollDistance < 20) return
+      
+      // Calculate score (prefer shorter detour but longer toll segment)
+      const detourDistance = entryDistance + exitDistance
+      const directDistance = calculateDistance(start.lat, start.lng, end.lat, end.lng)
+      const score = detourDistance - (tollDistance * 0.3) // Favor longer toll segments
+      
+      // Only consider if total distance is reasonable
+      if (entryDistance < 30 && exitDistance < 30 && tollDistance > directDistance * 0.5) {
+        if (score < bestScore) {
+          bestScore = score
+          bestEntry = entry
+          bestExit = exit
+        }
+      }
+    })
   })
   
-  return nearest
+  return { entry: bestEntry, exit: bestExit }
 }
 
-// Create highway-focused route with toll preference
+// Create highway-focused route with intelligent toll selection
 export const calculateRoute = async (
   departure: Location,
   stops: Location[],
   destination: Location,
 ): Promise<RouteResponse> => {
   try {
-    // Find optimal toll routing strategy
     const routePoints = [departure, ...stops, destination]
-    const tollOptimizedPoints: Location[] = []
-    const usedTollGates: { name: string; lat: number; lng: number }[] = []
+    const optimizedPoints: Location[] = []
+    const usedTollGates: { name: string; lat: number; lng: number; type: 'entrance' | 'exit' }[] = []
+    const tollSegments: string[] = []
     
     for (let i = 0; i < routePoints.length; i++) {
       const currentPoint = routePoints[i]
       const nextPoint = routePoints[i + 1]
       
-      tollOptimizedPoints.push(currentPoint)
+      optimizedPoints.push(currentPoint)
       
       if (nextPoint) {
-        const distance = calculateDistance(currentPoint.lat, currentPoint.lng, nextPoint.lat, nextPoint.lng)
+        const segmentDistance = calculateDistance(currentPoint.lat, currentPoint.lng, nextPoint.lat, nextPoint.lng)
         
-        // If distance > 50km, use toll roads
-        if (distance > 50) {
-          // Find nearest toll entrance to current point
-          const tollEntrance = findNearestTollGate(currentPoint)
+        // Use toll roads for segments > 40km
+        if (segmentDistance > 40) {
+          const { entry, exit } = findOptimalTollRoute(currentPoint, nextPoint)
           
-          // Find nearest toll exit to next point
-          const tollExit = findNearestTollGate(nextPoint)
-          
-          // Only add toll points if they're not too close to start/end points
-          const entranceDistance = calculateDistance(currentPoint.lat, currentPoint.lng, tollEntrance.lat, tollEntrance.lng)
-          const exitDistance = calculateDistance(nextPoint.lat, nextPoint.lng, tollExit.lat, tollExit.lng)
-          
-          if (entranceDistance > 5) { // 5km threshold
-            tollOptimizedPoints.push({
-              name: `Entry ${tollEntrance.name}`,
-              lat: tollEntrance.lat,
-              lng: tollEntrance.lng
-            })
-            usedTollGates.push(tollEntrance)
-          }
-          
-          if (exitDistance > 5 && tollEntrance.name !== tollExit.name) {
-            tollOptimizedPoints.push({
-              name: `Exit ${tollExit.name}`,
-              lat: tollExit.lat,
-              lng: tollExit.lng
-            })
-            usedTollGates.push(tollExit)
+          if (entry && exit) {
+            // Add entry point
+            const entryPoint = {
+              name: `🎫 ${entry.name}`,
+              lat: entry.lat,
+              lng: entry.lng
+            }
+            optimizedPoints.push(entryPoint)
+            usedTollGates.push({ ...entry, type: 'entrance' })
+            
+            // Add exit point
+            const exitPoint = {
+              name: `🚪 ${exit.name}`,
+              lat: exit.lat,
+              lng: exit.lng
+            }
+            optimizedPoints.push(exitPoint)
+            usedTollGates.push({ ...exit, type: 'exit' })
+            
+            tollSegments.push(`${entry.region} → ${exit.region}`)
+            
+            console.log(`🛣️ Toll route: ${entry.name} → ${exit.name}`)
           }
         }
       }
     }
     
-    // Build waypoints string for OSRM with toll-optimized points
-    const waypoints = tollOptimizedPoints.map((point) => `${point.lng},${point.lat}`).join(";")
+    // Build waypoints string for OSRM
+    const waypoints = optimizedPoints.map((point) => `${point.lng},${point.lat}`).join(";")
     
-    console.log("🛣️ Using toll-optimized route with", tollOptimizedPoints.length, "waypoints")
-    console.log("🎫 Toll gates:", usedTollGates.map(g => g.name).join(", "))
+    console.log("🛣️ Optimized route with", optimizedPoints.length, "waypoints")
+    console.log("🎫 Toll segments:", tollSegments.join(", "))
 
     const response = await fetch(
       `${OSRM_BASE_URL}/route/v1/driving/${waypoints}?overview=full&geometries=geojson&annotations=true`
     )
 
     if (!response.ok) {
-      throw new Error("Failed to calculate toll-optimized route")
+      throw new Error("Failed to calculate optimized toll route")
     }
 
     const data = await response.json()
@@ -129,61 +190,72 @@ export const calculateRoute = async (
       lng: coord[0],
     }))
 
+    const tollInfo = tollSegments.length > 0 
+      ? `Via toll: ${tollSegments.join(", ")} (${usedTollGates.length} gates)`
+      : "Direct route (no toll roads)"
+
     return {
       coordinates: routeCoordinates,
       distance: route.distance / 1000, // Convert to kilometers
       duration: Math.round(route.duration / 60), // Convert to minutes
       tollGates: usedTollGates,
+      tollInfo: tollInfo,
     }
   } catch (error) {
-    console.error("Error calculating toll route:", error)
-
-    // Fallback: enhanced route with highway preference
-    return calculateHighwayFallbackRoute(departure, stops, destination)
+    console.error("Error calculating optimized route:", error)
+    return calculateEnhancedFallbackRoute(departure, stops, destination)
   }
 }
 
-// Enhanced fallback route calculation with highway preference
-const calculateHighwayFallbackRoute = (departure: Location, stops: Location[], destination: Location): RouteResponse => {
+// Enhanced fallback route with better toll selection
+const calculateEnhancedFallbackRoute = (departure: Location, stops: Location[], destination: Location): RouteResponse => {
   const allPoints = [departure, ...stops, destination]
   const coordinates: { lat: number; lng: number }[] = []
   let totalDistance = 0
-  const usedTollGates: { name: string; lat: number; lng: number }[] = []
+  const usedTollGates: { name: string; lat: number; lng: number; type: 'entrance' | 'exit' }[] = []
+  const tollSegments: string[] = []
 
-  // Generate enhanced interpolated points with highway routing simulation
   for (let i = 0; i < allPoints.length - 1; i++) {
     const start = allPoints[i]
     const end = allPoints[i + 1]
-
-    // Calculate distance between points
     const segmentDistance = calculateDistance(start.lat, start.lng, end.lat, end.lng)
     totalDistance += segmentDistance
 
-    // For long distances, simulate highway routing
-    if (segmentDistance > 50) {
-      const tollEntry = findNearestTollGate(start)
-      const tollExit = findNearestTollGate(end)
+    if (segmentDistance > 40) {
+      const { entry, exit } = findOptimalTollRoute(start, end)
       
-      usedTollGates.push(tollEntry, tollExit)
-      
-      // Route via toll gates: start -> toll entry -> toll exit -> end
-      const segments = [
-        { from: start, to: { name: tollEntry.name, lat: tollEntry.lat, lng: tollEntry.lng } },
-        { from: { name: tollEntry.name, lat: tollEntry.lat, lng: tollEntry.lng }, to: { name: tollExit.name, lat: tollExit.lat, lng: tollExit.lng } },
-        { from: { name: tollExit.name, lat: tollExit.lat, lng: tollExit.lng }, to: end }
-      ]
-      
-      segments.forEach(segment => {
-        // Generate more points for highway segments (smoother animation)
-        const points = segment.from.name?.includes("Tol") || segment.to.name?.includes("Tol") ? 30 : 15
-        for (let j = 0; j <= points; j++) {
-          const ratio = j / points
+      if (entry && exit) {
+        usedTollGates.push({ ...entry, type: 'entrance' }, { ...exit, type: 'exit' })
+        tollSegments.push(`${entry.region} → ${exit.region}`)
+        
+        // Generate route: start → toll entry → toll exit → end
+        const segments = [
+          { from: start, to: { name: entry.name, lat: entry.lat, lng: entry.lng } },
+          { from: { name: entry.name, lat: entry.lat, lng: entry.lng }, to: { name: exit.name, lat: exit.lat, lng: exit.lng } },
+          { from: { name: exit.name, lat: exit.lat, lng: exit.lng }, to: end }
+        ]
+        
+        segments.forEach((segment, segIndex) => {
+          // More points for highway segments (smoother animation)
+          const pointCount = segIndex === 1 ? 40 : 20 // Highway segment gets more points
+          for (let j = 0; j <= pointCount; j++) {
+            const ratio = j / pointCount
+            coordinates.push({
+              lat: segment.from.lat + (segment.to.lat - segment.from.lat) * ratio,
+              lng: segment.from.lng + (segment.to.lng - segment.from.lng) * ratio,
+            })
+          }
+        })
+      } else {
+        // Direct route for segments without suitable toll roads
+        for (let j = 0; j <= 25; j++) {
+          const ratio = j / 25
           coordinates.push({
-            lat: segment.from.lat + (segment.to.lat - segment.from.lat) * ratio,
-            lng: segment.from.lng + (segment.to.lng - segment.from.lng) * ratio,
+            lat: start.lat + (end.lat - start.lat) * ratio,
+            lng: start.lng + (end.lng - start.lng) * ratio,
           })
         }
-      })
+      }
     } else {
       // Direct route for short distances
       for (let j = 0; j <= 20; j++) {
@@ -196,14 +268,18 @@ const calculateHighwayFallbackRoute = (departure: Location, stops: Location[], d
     }
   }
 
-  // Highway speed estimate: 70-80 km/h average
-  const highwaySpeed = 75
-  const estimatedDuration = Math.round((totalDistance / highwaySpeed) * 60)
+  // Realistic highway speed calculation
+  const avgSpeed = usedTollGates.length > 0 ? 75 : 50 // Highway vs regular roads
+  const estimatedDuration = Math.round((totalDistance / avgSpeed) * 60)
+  
+  const tollInfo = tollSegments.length > 0 
+    ? `Via toll: ${tollSegments.join(", ")} (${usedTollGates.length} gates)`
+    : "Direct route (no toll roads)"
 
-  console.log("🛣️ Fallback highway route:", {
+  console.log("🛣️ Enhanced fallback route:", {
     distance: totalDistance.toFixed(1) + "km",
     duration: estimatedDuration + " minutes",
-    tollGates: usedTollGates.length
+    tollInfo: tollInfo
   })
 
   return {
@@ -211,6 +287,7 @@ const calculateHighwayFallbackRoute = (departure: Location, stops: Location[], d
     distance: totalDistance,
     duration: estimatedDuration,
     tollGates: usedTollGates,
+    tollInfo: tollInfo,
   }
 }
 

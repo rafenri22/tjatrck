@@ -75,7 +75,7 @@ const formatElapsedTime = (minutes) => {
   return `${mins}m`
 }
 
-// Start tracking a trip with realistic timing
+// Enhanced tracking with bus destination parking
 const startTripTracking = async (trip) => {
   console.log(`🚀 Starting backend tracking for trip: ${trip.id}`)
 
@@ -113,8 +113,8 @@ const startTripTracking = async (trip) => {
   // Calculate realistic completion time in minutes
   const estimatedTripTimeMinutes = (totalDistance / realisticSpeed) * 60
   
-  // Calculate progress per update (every 30 seconds for smoother movement)
-  const updateIntervalSeconds = 30
+  // Calculate progress per update (every 20 seconds for smooth movement)
+  const updateIntervalSeconds = 20
   const totalUpdates = Math.ceil(estimatedTripTimeMinutes * 60 / updateIntervalSeconds)
   const progressPerUpdate = 100 / totalUpdates
 
@@ -166,11 +166,14 @@ const startTripTracking = async (trip) => {
         speed: Math.round(currentSpeed),
       }
 
-      // If completed, mark as completed
+      // If completed, mark as completed but keep bus at destination
       if (newProgress >= 100) {
         updates.status = "COMPLETED"
         updates.end_time = new Date().toISOString()
-        console.log(`✅ ${tripName}: Trip completed in ${formatElapsedTime(elapsedTimeMinutes)} (realistic timing)`)
+        console.log(`✅ ${tripName}: Trip completed in ${formatElapsedTime(elapsedTimeMinutes)} - Bus staying at destination`)
+        
+        // Set bus as inactive but keep at destination
+        await supabase.from("buses").update({ is_active: false }).eq("id", trip.bus_id)
       }
 
       // Update trip in database
@@ -193,16 +196,9 @@ const startTripTracking = async (trip) => {
         })
       }
 
-      // If completed, clean up
+      // If completed, keep bus at destination (don't remove location)
       if (newProgress >= 100) {
-        // Update bus status to inactive
-        await supabase.from("buses").update({ is_active: false }).eq("id", trip.bus_id)
-
-        // Remove bus location after 10 seconds
-        setTimeout(async () => {
-          await supabase.from("bus_locations").delete().eq("bus_id", trip.bus_id)
-        }, 10000)
-
+        console.log(`🏁 ${tripName}: Bus parked at destination - ${trip.destination.name}`)
         stopTripTracking(trip.id)
       }
 
@@ -212,7 +208,7 @@ const startTripTracking = async (trip) => {
     } catch (error) {
       console.error(`❌ Error tracking ${tripName}:`, error)
     }
-  }, updateIntervalSeconds * 1000) // Update every 30 seconds for realistic movement
+  }, updateIntervalSeconds * 1000) // Update every 20 seconds
 
   trackingIntervals.set(trip.id, interval)
   activeTrips.set(trip.id, { ...trip, speed: realisticSpeed, startTime, totalDistance, estimatedTime: estimatedTripTimeMinutes })
@@ -229,9 +225,9 @@ const stopTripTracking = (tripId) => {
   }
 }
 
-// Initialize tracking for existing in-progress trips
+// Enhanced initialization with bus positioning
 const initializeTracking = async () => {
-  console.log("🔄 Initializing backend tracking system...")
+  console.log("🔄 Initializing enhanced backend tracking system...")
 
   try {
     // Test Supabase connection first
@@ -244,6 +240,7 @@ const initializeTracking = async () => {
 
     console.log("✅ Supabase connection successful")
 
+    // Load in-progress trips
     const { data: inProgressTrips, error } = await supabase.from("trips").select("*").eq("status", "IN_PROGRESS")
 
     if (error) {
@@ -252,7 +249,7 @@ const initializeTracking = async () => {
     }
 
     if (inProgressTrips && inProgressTrips.length > 0) {
-      console.log(`🚀 Found ${inProgressTrips.length} in-progress trips, starting realistic tracking...`)
+      console.log(`🚀 Found ${inProgressTrips.length} in-progress trips, starting enhanced tracking...`)
 
       for (const trip of inProgressTrips) {
         await startTripTracking(trip)
@@ -260,8 +257,35 @@ const initializeTracking = async () => {
     } else {
       console.log("✅ No in-progress trips found")
     }
+
+    // Position buses for pending trips at departure locations
+    const { data: pendingTrips, error: pendingError } = await supabase.from("trips").select("*").eq("status", "PENDING")
+    
+    if (!pendingError && pendingTrips && pendingTrips.length > 0) {
+      console.log(`📍 Positioning ${pendingTrips.length} buses at departure locations...`)
+      
+      for (const trip of pendingTrips) {
+        try {
+          // Position bus at departure location
+          await supabase.from("bus_locations").delete().eq("bus_id", trip.bus_id)
+          await supabase.from("bus_locations").insert({
+            bus_id: trip.bus_id,
+            trip_id: trip.id,
+            lat: trip.departure.lat,
+            lng: trip.departure.lng,
+            progress: 0,
+            elapsed_time_minutes: 0,
+            timestamp: Date.now(),
+          })
+          console.log(`📍 Bus positioned at departure: ${trip.departure.name}`)
+        } catch (positionError) {
+          console.error("Error positioning bus:", positionError)
+        }
+      }
+    }
+
   } catch (error) {
-    console.error("❌ Error initializing tracking:", error)
+    console.error("❌ Error initializing enhanced tracking:", error)
   }
 }
 
@@ -281,8 +305,8 @@ app.get("/api/health", (req, res) => {
     timestamp: new Date().toISOString(),
     supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ? "✅ Configured" : "❌ Missing",
     supabaseKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "✅ Configured" : "❌ Missing",
-    trackingMode: "Realistic Speed (25-85 km/h)",
-    updateInterval: "30 seconds",
+    trackingMode: "Enhanced Realistic Speed (25-85 km/h) with Destination Parking",
+    updateInterval: "20 seconds",
     trips: activeTripsArray,
   })
 })
@@ -310,13 +334,13 @@ app.post("/api/trips/:tripId/start", async (req, res) => {
     // Update bus status
     await supabase.from("buses").update({ is_active: true }).eq("id", trip.bus_id)
 
-    // Start realistic tracking
+    // Start enhanced realistic tracking
     await startTripTracking({ ...trip, status: "IN_PROGRESS" })
 
     res.json({ 
       success: true, 
-      message: "Trip started with realistic speed tracking",
-      trackingMode: "Realistic timing based on distance and route type"
+      message: "Trip started with enhanced realistic speed tracking",
+      trackingMode: "Realistic timing with destination parking enabled"
     })
   } catch (error) {
     console.error("Error starting trip:", error)
@@ -347,13 +371,11 @@ app.post("/api/trips/:tripId/cancel", async (req, res) => {
       })
       .eq("id", tripId)
 
-    // Update bus status
+    // Update bus status and remove location (return to garage)
     await supabase.from("buses").update({ is_active: false }).eq("id", trip.bus_id)
-
-    // Remove bus location
     await supabase.from("bus_locations").delete().eq("bus_id", trip.bus_id)
 
-    res.json({ success: true, message: "Trip cancelled and tracking stopped" })
+    res.json({ success: true, message: "Trip cancelled - Bus returned to garage" })
   } catch (error) {
     console.error("Error cancelling trip:", error)
     res.status(500).json({ error: "Failed to cancel trip" })
@@ -374,11 +396,11 @@ app.get("/api/trips/active", (req, res) => {
   res.json(activeTripsArray)
 })
 
-// Set up real-time subscriptions to database changes
+// Enhanced real-time subscriptions
 const setupRealtimeSubscriptions = () => {
-  console.log("📡 Setting up real-time subscriptions...")
+  console.log("📡 Setting up enhanced real-time subscriptions...")
 
-  // Listen for trip changes
+  // Listen for trip changes with bus positioning
   supabase
     .channel("backend_trips")
     .on("postgres_changes", { event: "*", schema: "public", table: "trips" }, async (payload) => {
@@ -394,6 +416,27 @@ const setupRealtimeSubscriptions = () => {
           console.log("🛑 Trip no longer in progress:", trip.id.slice(0, 8))
           stopTripTracking(trip.id)
         }
+      } else if (payload.eventType === "INSERT") {
+        const trip = payload.new
+        
+        // Position bus at departure for new pending trips
+        if (trip.status === "PENDING") {
+          try {
+            await supabase.from("bus_locations").delete().eq("bus_id", trip.bus_id)
+            await supabase.from("bus_locations").insert({
+              bus_id: trip.bus_id,
+              trip_id: trip.id,
+              lat: trip.departure.lat,
+              lng: trip.departure.lng,
+              progress: 0,
+              elapsed_time_minutes: 0,
+              timestamp: Date.now(),
+            })
+            console.log(`📍 New trip: Bus positioned at ${trip.departure.name}`)
+          } catch (positionError) {
+            console.error("Error positioning bus for new trip:", positionError)
+          }
+        }
       }
     })
     .subscribe((status) => {
@@ -403,30 +446,30 @@ const setupRealtimeSubscriptions = () => {
 
 // Start server
 app.listen(PORT, async () => {
-  console.log(`🚀 Bus Tracking Backend Server running on port ${PORT}`)
+  console.log(`🚀 Enhanced Bus Tracking Backend Server running on port ${PORT}`)
   console.log(`📊 Health check: http://localhost:${PORT}/api/health`)
   console.log(`🔧 Environment:`)
   console.log(`   - Supabase URL: ${process.env.NEXT_PUBLIC_SUPABASE_URL ? "✅ Configured" : "❌ Missing"}`)
   console.log(`   - Supabase Key: ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "✅ Configured" : "❌ Missing"}`)
-  console.log(`🚌 Tracking Mode: Realistic Speed (25-85 km/h based on route type)`)
-  console.log(`⏱️ Update Interval: 30 seconds for smooth movement`)
+  console.log(`🚌 Tracking Mode: Enhanced Realistic Speed (25-85 km/h) with Destination Parking`)
+  console.log(`⏱️ Update Interval: 20 seconds for optimal real-time experience`)
 
-  // Initialize tracking and subscriptions
+  // Initialize enhanced tracking and subscriptions
   await initializeTracking()
   setupRealtimeSubscriptions()
 
-  console.log("✅ Backend tracking system ready with realistic timing!")
+  console.log("✅ Enhanced backend tracking system ready with destination parking!")
 })
 
 // Graceful shutdown
 process.on("SIGINT", () => {
-  console.log("🛑 Shutting down backend server...")
+  console.log("🛑 Shutting down enhanced backend server...")
 
   // Clear all intervals
   trackingIntervals.forEach((interval) => clearInterval(interval))
   trackingIntervals.clear()
   activeTrips.clear()
 
-  console.log("✅ Backend server stopped")
+  console.log("✅ Enhanced backend server stopped")
   process.exit(0)
 })
