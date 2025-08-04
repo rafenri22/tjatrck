@@ -369,7 +369,7 @@ const calculateHighwayFallbackRoute = (departure: Location, stops: Location[], d
   }
 }
 
-// Calculate distance between two coordinates using Haversine formula
+// Calculate distance between two coordinates using Haversine formulaa
 export const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
   const R = 6371 // Earth's radius in kilometers
   const dLat = toRadians(lat2 - lat1)

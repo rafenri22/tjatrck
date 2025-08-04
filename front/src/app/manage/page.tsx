@@ -817,7 +817,7 @@ export default function ManagePage() {
 
         {activeTab === "trips" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Create Trip Form - Enhanced Mobile */}
+            {/* Create Trip Form - Enhanced Mobilee */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg md:text-xl flex items-center gap-2">

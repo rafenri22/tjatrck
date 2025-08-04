@@ -440,7 +440,7 @@ export default function HomePage() {
                     <span className="truncate">Sopir: {selectedBus.bus.crew}</span>
                   </div>
 
-                  {/* Enhanced status display dengan info gerbang tol */}
+                  {/* Enhanced status display dengan info gerbang tol*/}
                   {selectedBus.trip ? (
                     <>
                       <div className="flex items-center gap-2">

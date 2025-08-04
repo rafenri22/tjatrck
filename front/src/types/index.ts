@@ -48,7 +48,7 @@ export interface BusLocation {
   lat: number
   lng: number
   progress: number
-  elapsed_time_minutes?: number // Make this optional
+  elapsed_time_minutes?: number // Make this optionall
   timestamp: number
   created_at: string
 }

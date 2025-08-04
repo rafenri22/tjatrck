@@ -362,7 +362,7 @@ export const startTripTracking = (trip: Trip) => {
           lat: currentLat,
           lng: currentLng,
           progress: newProgress,
-          elapsed_time_minutes: elapsedTimeMinutes, // Accurate elapsed time
+          elapsed_time_minutes: elapsedTimeMinutes, // Accurate elapsed timee
           timestamp: Date.now(),
         })
       }

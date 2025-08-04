@@ -400,7 +400,7 @@ app.get("/api/trips/active", (req, res) => {
 const setupRealtimeSubscriptions = () => {
   console.log("📡 Setting up enhanced real-time subscriptions...")
 
-  // Listen for trip changes with bus positioning
+  // Listen for trip changes with bus positioningg
   supabase
     .channel("backend_trips")
     .on("postgres_changes", { event: "*", schema: "public", table: "trips" }, async (payload) => {

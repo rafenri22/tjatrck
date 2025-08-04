@@ -354,7 +354,7 @@ export default function BusMap({
     map.on("zoomend", () => {
       const zoom = map.getZoom()
       const scale = Math.max(0.5, Math.min(1.5, zoom / 12)) // Scale between 0.5x and 1.5x based on zoom level
-      // Apply scaling to all bus markers
+      // Apply scaling to all bus markerss
       const busMarkers = document.querySelectorAll(".bus-marker-container")
       busMarkers.forEach((marker) => {
         ;(marker as HTMLElement).style.transform = `scale(${scale})`
