@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Loading } from "@/components/ui/loading"
 import { useToast } from "@/hooks/use-toast"
-import { ArrowLeft, Plus, BusIcon, Navigation, Trash2, Play, Upload, MapPin, Clock, Square, AlertCircle, CheckCircle, XCircle, RefreshCw, Server, Wifi, WifiOff, Heart } from 'lucide-react'
+import { ArrowLeft, Plus, BusIcon, Navigation, Trash2, Play, Upload, MapPin, Clock, Square, AlertCircle, CheckCircle, XCircle, RefreshCw, Server, Wifi, WifiOff, Heart, Zap } from 'lucide-react'
 import Link from "next/link"
 import Image from "next/image"
 
@@ -319,10 +319,16 @@ export default function ManagePage() {
         throw new Error("Please select bus, departure, and destination")
       }
       
-      // Calculate route using OSRM with timeout
+      toast({
+        title: "🛣️ Calculating Highway Route",
+        description: "Finding optimal toll road route...",
+        variant: "default",
+      })
+      
+      // Calculate route using enhanced routing with toll preference
       const routePromise = calculateRoute(tripForm.departure, tripForm.stops, tripForm.destination)
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Route calculation timeout')), 15000)
+        setTimeout(() => reject(new Error('Route calculation timeout')), 20000)
       )
       
       const routeData = await Promise.race([routePromise, timeoutPromise]) as any
@@ -330,7 +336,7 @@ export default function ManagePage() {
       // Create trip with route data
       const newTrip = await createTrip(tripForm)
       
-      // Update trip with route data
+      // Update trip with enhanced route data
       await supabase
         .from("trips")
         .update({
@@ -348,9 +354,12 @@ export default function ManagePage() {
         destination: { name: "", lat: 0, lng: 0 },
       })
       
+      const tollInfo = routeData.tollGates?.length > 0 ? 
+        ` via ${routeData.tollGates.length} toll gates` : ""
+      
       toast({
         title: "✅ Trip Created Successfully",
-        description: `Route: ${tripForm.departure.name} → ${tripForm.destination.name}`,
+        description: `Route: ${tripForm.departure.name} → ${tripForm.destination.name}${tollInfo}`,
         variant: "success",
       })
     } catch (tripError) {
@@ -380,7 +389,7 @@ export default function ManagePage() {
       await backendApi.startTrip(trip.id)
       toast({
         title: "🚀 Trip Started",
-        description: "Bus is now being tracked with realistic timing",
+        description: "Bus is now being tracked with realistic highway timing",
         variant: "success",
       })
     } catch (startError) {
@@ -532,6 +541,7 @@ export default function ManagePage() {
                   <div className="flex items-center gap-1 md:gap-2 text-green-600">
                     <Server className="h-3 w-3 md:h-4 md:w-4" />
                     <Wifi className="h-2 w-2 md:h-3 md:w-3" />
+                    <Zap className="h-2 w-2 md:h-3 md:w-3" />
                     <span className="hidden sm:inline">Backend Connected</span>
                     <span className="sm:hidden">Connected</span>
                   </div>
@@ -813,6 +823,7 @@ export default function ManagePage() {
                 <CardTitle className="text-lg md:text-xl flex items-center gap-2">
                   Create New Trip
                   <Heart className="h-4 w-4 text-red-500" title="Uses favorite locations" />
+                  <Zap className="h-4 w-4 text-yellow-500" title="Highway routing" />
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -937,7 +948,7 @@ export default function ManagePage() {
                     {tripLoading ? (
                       <>
                         <Loading size="sm" />
-                        Creating Trip...
+                        Creating Highway Route...
                       </>
                     ) : (
                       <>
@@ -1056,7 +1067,10 @@ export default function ManagePage() {
                               </div>
                               <div className="flex justify-between items-center mt-1 text-xs text-gray-500">
                                 <span>Speed: {trip.speed} km/h</span>
-                                <span>Realistic Timing</span>
+                                <span className="flex items-center gap-1">
+                                  <Zap className="h-3 w-3" />
+                                  Highway Route
+                                </span>
                               </div>
                             </div>
                           )}

@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast"
 
 // Global tracking intervals
 const trackingIntervals = new Map<string, NodeJS.Timeout>()
+const tripStartTimes = new Map<string, number>()
 
 // Realistic speed calculation based on route type and conditions
 const getRealisticSpeed = (distance: number): number => {
@@ -65,6 +66,10 @@ export function GlobalTracker() {
         clearInterval(existingInterval)
       }
 
+      // Store actual trip start time for accurate elapsed time calculation
+      const actualStartTime = trip.start_time ? new Date(trip.start_time).getTime() : Date.now()
+      tripStartTimes.set(trip.id, actualStartTime)
+
       // Calculate total distance for realistic speed
       let totalDistance = 0
       if (trip.route && trip.route.length > 1) {
@@ -89,8 +94,8 @@ export function GlobalTracker() {
       // Calculate realistic completion time in minutes
       const estimatedTripTimeMinutes = (totalDistance / realisticSpeed) * 60
       
-      // Calculate progress per update (every 30 seconds for smoother movement)
-      const updateIntervalSeconds = 30
+      // Calculate progress per update (every 15 seconds for smoother movement)
+      const updateIntervalSeconds = 15
       const totalUpdates = Math.ceil(estimatedTripTimeMinutes * 60 / updateIntervalSeconds)
       const progressPerUpdate = 100 / totalUpdates
 
@@ -98,7 +103,6 @@ export function GlobalTracker() {
         `📊 ${tripName}: Distance: ${totalDistance.toFixed(1)}km, Speed: ${realisticSpeed}km/h, Est. time: ${estimatedTripTimeMinutes.toFixed(0)}min`
       )
 
-      const startTime = Date.now()
       let currentSpeed = realisticSpeed
 
       const interval = setInterval(async () => {
@@ -111,7 +115,8 @@ export function GlobalTracker() {
             return
           }
 
-          // Calculate elapsed time in minutes
+          // Calculate ACCURATE elapsed time from stored start time
+          const startTime = tripStartTimes.get(trip.id) || actualStartTime
           const elapsedTimeMs = Date.now() - startTime
           const elapsedTimeMinutes = elapsedTimeMs / (1000 * 60)
 
@@ -154,7 +159,7 @@ export function GlobalTracker() {
           // Update in database
           await updateTrip(trip.id, updates)
 
-          // Update bus location for real-time tracking
+          // Update bus location for real-time tracking with ACCURATE elapsed time
           if (currentLat && currentLng) {
             await updateBusLocation({
               bus_id: trip.bus_id,
@@ -162,7 +167,7 @@ export function GlobalTracker() {
               lat: currentLat,
               lng: currentLng,
               progress: newProgress,
-              elapsed_time_minutes: elapsedTimeMinutes,
+              elapsed_time_minutes: elapsedTimeMinutes, // Use accurate elapsed time
               timestamp: Date.now(),
             })
           }
@@ -176,11 +181,12 @@ export function GlobalTracker() {
             stopTracking(trip.id)
           }
 
-          console.log(`📊 ${tripName}: ${newProgress.toFixed(1)}% - ${currentSpeed.toFixed(0)}km/h`)
+          const formattedTime = `${Math.floor(elapsedTimeMinutes / 60)}h ${Math.floor(elapsedTimeMinutes % 60)}m`
+          console.log(`📊 ${tripName}: ${newProgress.toFixed(1)}% (${formattedTime}) - ${currentSpeed.toFixed(0)}km/h`)
         } catch (trackingError) {
           console.error("❌ Error in global tracking:", trackingError)
         }
-      }, updateIntervalSeconds * 1000) // Update every 30 seconds for realistic movement
+      }, updateIntervalSeconds * 1000) // Update every 15 seconds for smooth movement
 
       trackingIntervals.set(trip.id, interval)
       console.log(`✅ Global tracking started for: ${tripName} at realistic speed`)
@@ -194,6 +200,7 @@ export function GlobalTracker() {
     if (interval) {
       clearInterval(interval)
       trackingIntervals.delete(tripId)
+      tripStartTimes.delete(tripId) // Clean up start time storage
       console.log("🛑 Global tracking stopped for:", tripId.slice(0, 8))
     }
   }, [])
@@ -205,22 +212,27 @@ export function GlobalTracker() {
     console.log("🔄 Initializing Global Tracker with realistic timing...")
 
     // Start tracking for existing in-progress trips
-    const checkAndStartTracking = () => {
-      const trips = realtimeStore.getTrips()
-      const inProgressTrips = trips.filter((trip) => trip.status === "IN_PROGRESS")
-      console.log(`Found ${inProgressTrips.length} in-progress trips`)
-      inProgressTrips.forEach((trip) => {
-        if (!trackingIntervals.has(trip.id)) {
-          startTracking(trip)
-        }
-      })
-      if (inProgressTrips.length > 0) {
-        toast({
-          title: "🚌 Tracking Active",
-          description: `Monitoring ${inProgressTrips.length} trips with realistic timing`,
-          variant: "default",
+    const checkAndStartTracking = async () => {
+      // Wait for store to be populated
+      setTimeout(() => {
+        const trips = realtimeStore.getTrips()
+        const inProgressTrips = trips.filter((trip) => trip.status === "IN_PROGRESS")
+        console.log(`Found ${inProgressTrips.length} in-progress trips`)
+        
+        inProgressTrips.forEach((trip) => {
+          if (!trackingIntervals.has(trip.id)) {
+            startTracking(trip)
+          }
         })
-      }
+        
+        if (inProgressTrips.length > 0) {
+          toast({
+            title: "🚌 Tracking Resumed",
+            description: `Monitoring ${inProgressTrips.length} trips with synced timing`,
+            variant: "default",
+          })
+        }
+      }, 1000) // Wait 1 second for initial data to load
     }
 
     // Initial check
@@ -255,6 +267,7 @@ export function GlobalTracker() {
       console.log("🧹 Cleaning up Global Tracker")
       trackingIntervals.forEach((interval) => clearInterval(interval))
       trackingIntervals.clear()
+      tripStartTimes.clear()
       isInitialized.current = false
       unsubscribe()
     }
@@ -263,7 +276,7 @@ export function GlobalTracker() {
   return null // This is a logic-only component
 }
 
-// Export functions for manual control
+// Export functions for manual control with enhanced timing
 export const startTripTracking = (trip: Trip) => {
   const buses = realtimeStore.getBuses()
   const bus = buses.find((b) => b.id === trip.bus_id)
@@ -275,6 +288,10 @@ export const startTripTracking = (trip: Trip) => {
   if (existingInterval) {
     clearInterval(existingInterval)
   }
+
+  // Store start time for accurate elapsed time
+  const startTime = trip.start_time ? new Date(trip.start_time).getTime() : Date.now()
+  tripStartTimes.set(trip.id, startTime)
 
   // Calculate realistic timing based on distance
   let totalDistance = 0
@@ -295,7 +312,7 @@ export const startTripTracking = (trip: Trip) => {
 
   const realisticSpeed = getRealisticSpeed(totalDistance)
   const estimatedTripTimeMinutes = (totalDistance / realisticSpeed) * 60
-  const updateIntervalSeconds = 30
+  const updateIntervalSeconds = 15
   const totalUpdates = Math.ceil(estimatedTripTimeMinutes * 60 / updateIntervalSeconds)
   const progressPerUpdate = 100 / totalUpdates
 
@@ -307,6 +324,11 @@ export const startTripTracking = (trip: Trip) => {
         stopTripTracking(trip.id)
         return
       }
+
+      // Calculate accurate elapsed time
+      const tripStartTime = tripStartTimes.get(trip.id) || startTime
+      const elapsedTimeMs = Date.now() - tripStartTime
+      const elapsedTimeMinutes = elapsedTimeMs / (1000 * 60)
 
       const newProgress = Math.min(100, currentTrip.progress + progressPerUpdate)
       let currentLat = currentTrip.current_lat
@@ -340,7 +362,7 @@ export const startTripTracking = (trip: Trip) => {
           lat: currentLat,
           lng: currentLng,
           progress: newProgress,
-          elapsed_time_minutes: (Date.now() - Date.now()) / (1000 * 60),
+          elapsed_time_minutes: elapsedTimeMinutes, // Accurate elapsed time
           timestamp: Date.now(),
         })
       }
@@ -353,7 +375,7 @@ export const startTripTracking = (trip: Trip) => {
         stopTripTracking(trip.id)
       }
 
-      console.log(`📊 Manual ${tripName}: ${newProgress.toFixed(1)}%`)
+      console.log(`📊 Manual ${tripName}: ${newProgress.toFixed(1)}% (${Math.floor(elapsedTimeMinutes)}m)`)
     } catch (manualError) {
       console.error("❌ Error in manual tracking:", manualError)
     }
@@ -368,6 +390,7 @@ export const stopTripTracking = (tripId: string) => {
   if (interval) {
     clearInterval(interval)
     trackingIntervals.delete(tripId)
+    tripStartTimes.delete(tripId)
     console.log("🛑 Manual tracking stopped for:", tripId.slice(0, 8))
   }
 }

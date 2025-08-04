@@ -23,12 +23,12 @@ interface BusMapProps {
   autoFit?: boolean
 }
 
-// Format elapsed time for display
+// Format elapsed time for display - FIXED to use actual elapsed time
 const formatElapsedTime = (minutes: number): string => {
   const hours = Math.floor(minutes / 60)
   const mins = Math.floor(minutes % 60)
   if (hours > 0) {
-    return `${hours}h${mins}m`
+    return `${hours}h ${mins}m`
   }
   return `${mins}m`
 }
@@ -63,10 +63,11 @@ export default function BusMap({
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return
 
-    // Initialize map centered on Jakarta (garage location)
+    // Initialize map centered on Java Island instead of garage
+    const javaCenter = [-7.5, 110.0] // Center of Java Island
     const map = L.map(mapRef.current, {
-      center: [GARAGE_LOCATION.lat, GARAGE_LOCATION.lng],
-      zoom: window.innerWidth < 768 ? 10 : 12, // Responsive zoom
+      center: javaCenter as [number, number],
+      zoom: window.innerWidth < 768 ? 7 : 8, // Zoom to show Java Island
       zoomControl: true,
       scrollWheelZoom: true,
       doubleClickZoom: true,
@@ -132,14 +133,26 @@ export default function BusMap({
     markers.forEach((marker) => map.removeLayer(marker))
     markers.clear()
 
-    // Add markers for active buses (on trip)
+    // Add markers for active buses (on trip) - FIXED with proper elapsed time sync
     busLocations.forEach((location) => {
       const trip = trips.find((t) => t.id === location.trip_id)
       const bus = buses.find((b) => b.id === location.bus_id)
       if (!trip || !bus) return
 
-      // Format elapsed time for display
-      const elapsedTime = formatElapsedTime(location.elapsed_time_minutes || 0)
+      // Calculate actual elapsed time from trip start time and backend sync
+      let elapsedMinutes = 0
+      if (trip.start_time) {
+        const startTime = new Date(trip.start_time).getTime()
+        const currentTime = Date.now()
+        elapsedMinutes = Math.floor((currentTime - startTime) / (1000 * 60))
+      }
+      
+      // Use backend elapsed time if available (more accurate)
+      if (location.elapsed_time_minutes !== undefined && location.elapsed_time_minutes > 0) {
+        elapsedMinutes = location.elapsed_time_minutes
+      }
+
+      const elapsedTime = formatElapsedTime(elapsedMinutes)
 
       // Bus icon for active buses with zoom-responsive size
       const busIcon = L.divIcon({
@@ -272,6 +285,7 @@ export default function BusMap({
               <div class="space-y-1 text-sm">
                 <p><strong>Driver:</strong> ${bus.crew}</p>
                 <p><strong>Status:</strong> <span class="text-gray-600">Parked at ${GARAGE_LOCATION.name}</span></p>
+                <p><strong>Location:</strong> <span class="text-green-600">Ready for Trip</span></p>
               </div>
               ${
                 showControls
@@ -301,11 +315,15 @@ export default function BusMap({
       })
     }
 
-    // Only auto-fit if explicitly requested (for admin panel)
-    if (autoFit && markers.size > 0) {
-      const allMarkers = Array.from(markers.values())
-      const group = new L.FeatureGroup(allMarkers)
-      map.fitBounds(group.getBounds().pad(0.1))
+    // Only auto-fit if explicitly requested and there are active buses
+    if (autoFit && busLocations.length > 0) {
+      const activeMarkers = Array.from(markers.values()).filter((marker, index) => 
+        index < busLocations.length // Only active bus markers
+      )
+      if (activeMarkers.length > 0) {
+        const group = new L.FeatureGroup(activeMarkers)
+        map.fitBounds(group.getBounds().pad(0.1))
+      }
     }
 
     // Global functions for popup buttons
