@@ -37,6 +37,8 @@ export interface Trip {
   end_time?: string
   created_at: string
   updated_at: string
+  toll_info?: string // Info gerbang tol yang dilalui
+  toll_route?: string[] // Array rute gerbang tol berurutan
 }
 
 export interface BusLocation {

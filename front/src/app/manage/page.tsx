@@ -320,8 +320,8 @@ export default function ManagePage() {
       }
       
       toast({
-        title: "🛣️ Calculating Enhanced Highway Route",
-        description: "Finding optimal toll road route with detailed gate information...",
+        title: "🛣️ Menghitung Rute Tol Cerdas",
+        description: "Mencari rute optimal dengan informasi gerbang tol terlengkap...",
         variant: "default",
       })
       
@@ -341,8 +341,10 @@ export default function ManagePage() {
         .from("trips")
         .update({
           route: routeData.coordinates,
-          distance: routeData.distance,
+          distance: routeData.distance,  
           estimated_duration: routeData.duration,
+          toll_info: routeData.tollInfo, // Info gerbang tol
+          toll_route: routeData.tollRoute, // Array rute gerbang tol
         })
         .eq("id", newTrip.id)
       
@@ -354,18 +356,18 @@ export default function ManagePage() {
         destination: { name: "", lat: 0, lng: 0 },
       })
       
-      const tollInfo = routeData.tollInfo || "Direct route (no toll roads)"
+      const tollInfo = routeData.tollInfo || "Rute langsung (tanpa tol)"
       
       toast({
-        title: "✅ Trip Created Successfully",
-        description: `Route: ${tripForm.departure.name} → ${tripForm.destination.name}. ${tollInfo}`,
+        title: "✅ Trip Berhasil Dibuat",
+        description: `Rute: ${tripForm.departure.name} → ${tripForm.destination.name}. ${tollInfo}`,
         variant: "success",
       })
     } catch (tripError) {
       console.error("Failed to create trip:", tripError)
       toast({
-        title: "❌ Failed to Create Trip",
-        description: tripError instanceof Error ? tripError.message : "Please check your route and try again",
+        title: "❌ Gagal Membuat Trip",
+        description: tripError instanceof Error ? tripError.message : "Silakan periksa rute dan coba lagi",
         variant: "destructive",
       })
     } finally {
@@ -823,14 +825,14 @@ export default function ManagePage() {
                 <CardTitle className="text-lg md:text-xl flex items-center gap-2">
                   Create Enhanced Trip
                   <span title="Uses favorite locations">
-  <Heart className="h-4 w-4 text-red-500" />
-</span>
-<span title="Enhanced toll routing">
-  <Router className="h-4 w-4 text-blue-500" />
-</span>
-<span title="Destination parking">
-  <Zap className="h-4 w-4 text-yellow-500" />
-</span>
+                    <Heart className="h-4 w-4 text-red-500" />
+                  </span>
+                  <span title="Enhanced toll routing">
+                    <Router className="h-4 w-4 text-blue-500" />
+                  </span>
+                  <span title="Destination parking">
+                    <Zap className="h-4 w-4 text-yellow-500" />
+                  </span>
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -993,7 +995,7 @@ export default function ManagePage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3 max-h-96 overflow-y-auto scrollbar-thin">
-                  {trips.map((trip) => {
+                  {trips.map((trip: any) => {
                     const bus = buses.find((b) => b.id === trip.bus_id)
                     return (
                       <div key={trip.id} className="p-3 border rounded-lg animate-fadeIn">
@@ -1064,9 +1066,30 @@ export default function ManagePage() {
                           {trip.stops.length > 0 && (
                             <p className="flex items-start gap-2">
                               <Clock className="h-3 w-3 text-gray-400 mt-0.5 flex-shrink-0" />
-                              <span className="text-xs">Stops: {trip.stops.map((stop) => stop.name).join(", ")}</span>
+                              <span className="text-xs">Stops: {trip.stops.map((stop: any) => stop.name).join(", ")}</span>
                             </p>
                           )}
+                          
+                          {/* Info Gerbang Tol yang Dilalui */}
+                          {trip.toll_route && trip.toll_route.length > 0 && (
+                            <div className="bg-blue-50 p-2 rounded mt-2">
+                              <div className="flex items-center gap-1 mb-1">
+                                <Router className="h-3 w-3 text-blue-600" />
+                                <span className="text-xs font-medium text-blue-700">Gerbang Tol Dilalui:</span>
+                              </div>
+                              <div className="text-xs text-blue-600 space-y-0.5">
+                                {trip.toll_route.map((toll: string, index: number) => (
+                                  <div key={index} className="flex items-center gap-1">
+                                    <span className="w-3 h-3 bg-blue-200 rounded-full flex items-center justify-center text-xs font-bold text-blue-800 flex-shrink-0">
+                                      {index + 1}
+                                    </span>
+                                    <span className="truncate">{toll}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          
                           {trip.status === "IN_PROGRESS" && (
                             <div className="mt-2">
                               <div className="flex justify-between items-center mb-1">
